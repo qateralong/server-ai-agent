@@ -30,5 +30,8 @@ extra["mainClassName"] = "com.bebebe.agent.client.ClientMain"
 extra["javaOptions"] = listOf("--enable-native-access=ALL-UNNAMED")
 extra["buildDeb"] = true
 extra["buildWinExe"] = true
+extra["buildArchPkg"] = true
+extra["desktopEntry"] = true
+extra["displayName"] = "Server AI Agent Client"
 extra["appDescription"] = "Server AI Agent: thin client (scripts, clipboard, push-to-talk)"
 apply(from = rootProject.file("gradle/packaging.gradle.kts"))

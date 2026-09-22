@@ -32,5 +32,10 @@ extra["mainClassName"] = "com.bebebe.agent.server.ServerMain"
 extra["javaOptions"] = listOf("--enable-native-access=ALL-UNNAMED")
 extra["buildDeb"] = true
 extra["buildWinExe"] = false
+// No Arch package: the server is meant to live on a headless Ubuntu box, and its
+// systemd unit is the Debian/Ubuntu path. Arch gets the client and the GUI build.
+extra["buildArchPkg"] = false
+extra["desktopEntry"] = false
+extra["displayName"] = "Server AI Agent Server"
 extra["appDescription"] = "Server AI Agent: headless AI agent server (Telegram, transport for thin clients)"
 apply(from = rootProject.file("gradle/packaging.gradle.kts"))

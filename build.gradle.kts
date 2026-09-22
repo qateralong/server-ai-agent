@@ -57,12 +57,13 @@ subprojects {
 
 tasks.register("releaseArtifacts") {
     group = "distribution"
-    description = "Linux part of the release: three JARs, app-image tar.gz x3, .deb x2 -> build/release/{jars,native}"
+    description = "Linux part of the release: three JARs, app-image tar.gz x3, .deb x3, " +
+        ".pkg.tar.zst x2 (only where makepkg is available) -> build/release/{jars,native}"
     dependsOn(":server-app:packageNative", ":client-app:packageNative", ":supervisor-app:packageNative")
 }
 
 tasks.register("releaseArtifactsWindows") {
     group = "distribution"
-    description = "Windows part of the release: thin client -- app-image zip and .exe installer"
-    dependsOn(":client-app:packageNative")
+    description = "Windows part of the release: thin client and the GUI build -- app-image zip and .exe installer"
+    dependsOn(":client-app:packageNative", ":supervisor-app:packageNative")
 }

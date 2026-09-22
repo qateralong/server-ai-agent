@@ -45,7 +45,7 @@ jobs:
         run: ./gradlew releaseArtifacts -PreleaseVersion=${{ needs.version.outputs.version }} --no-daemon
 
       - name: What got built
-        run: ls -la build/release/jars build/release/native
+        run: ls -la build/release/jars build/release/native build/release/arch/*
 
       - uses: actions/upload-artifact@v4
         with:
@@ -55,6 +55,59 @@ jobs:
             build/release/jars/*.jar
             build/release/native/*.tar.gz
             build/release/native/*.deb
+
+      # Only the recipes: the tarball they are built from travels in the artifact above,
+      # and the arch job puts the two back together.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch-pkgbuild-${{ needs.version.outputs.version }}
+          if-no-files-found: error
+          path: |
+            build/release/arch/*/PKGBUILD
+            build/release/arch/*/*.desktop
+
+  arch:
+    needs: [version, linux]
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: server-ai-agent-linux-${{ needs.version.outputs.version }}
+          path: linux
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: arch-pkgbuild-${{ needs.version.outputs.version }}
+          path: pkgbuild
+
+      - name: makepkg
+        run: |
+          set -euo pipefail
+          # makepkg refuses to run as root, and a container job is root.
+          useradd -m builder
+          mkdir -p out
+          for d in pkgbuild/*/; do
+            tarball=$(sed -n 's/^source=("\([^"]*\.tar\.gz\)".*/\1/p' "$d/PKGBUILD")
+            test -n "$tarball" || { echo "::error::no source tarball in $d/PKGBUILD"; exit 1; }
+            cp "linux/native/$tarball" "$d/"
+          done
+          chown -R builder:builder pkgbuild out
+          for d in pkgbuild/*/; do
+            echo "== $d"
+            # -H: without it HOME stays /root, which builder cannot write to.
+            (cd "$d" && sudo -H -u builder env PKGEXT=.pkg.tar.zst makepkg --force --nodeps --noconfirm --clean)
+            cp "$d"*.pkg.tar.zst out/
+          done
+          ls -la out
+          n=$(find out -name '*.pkg.tar.zst' | wc -l)
+          if [[ "$n" -ne 2 ]]; then echo "::error::expected 2 Arch packages, found $n"; exit 1; fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-ai-agent-arch-${{ needs.version.outputs.version }}
+          if-no-files-found: error
+          path: out/*.pkg.tar.zst
 
   windows:
     needs: version
@@ -79,7 +132,7 @@ jobs:
             "C:\Program Files (x86)\WiX Toolset v3.14\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
           }
 
-      - name: Native Windows build (thin client)
+      - name: Native Windows builds (thin client and GUI)
         shell: pwsh
         run: ./gradlew releaseArtifactsWindows -x test "-PreleaseVersion=${{ needs.version.outputs.version }}" --no-daemon
 
@@ -87,8 +140,10 @@ jobs:
         shell: pwsh
         run: |
           Get-ChildItem build/release/native
-          if (-not (Test-Path build/release/native/*.exe)) { Write-Error ".exe installer was not built (no WiX?)"; exit 1 }
-          if (-not (Test-Path build/release/native/*.zip)) { Write-Error "app-image zip was not built"; exit 1 }
+          $exe = @(Get-ChildItem build/release/native/*.exe)
+          $zip = @(Get-ChildItem build/release/native/*.zip)
+          if ($exe.Count -ne 2) { Write-Error "expected 2 .exe installers (client, GUI), found $($exe.Count) -- no WiX?"; exit 1 }
+          if ($zip.Count -ne 2) { Write-Error "expected 2 app-image zips (client, GUI), found $($zip.Count)"; exit 1 }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -99,11 +154,13 @@ jobs:
             build/release/native/*.exe
 
   release:
-    needs: [version, linux, windows]
+    needs: [version, linux, arch, windows]
     runs-on: ubuntu-24.04
     steps:
+      # Only the publishable artifacts: arch-pkgbuild-* is an intermediate for the arch job.
       - uses: actions/download-artifact@v4
         with:
+          pattern: server-ai-agent-*-${{ needs.version.outputs.version }}
           path: dist
           merge-multiple: true
 
@@ -113,8 +170,13 @@ jobs:
           find dist -mindepth 1 -type d -empty -delete
           ls -la dist
           n=$(find dist -maxdepth 1 -type f | wc -l)
-          if [[ "$n" -ne 10 ]]; then echo "::error::expected 10 artifacts, found $n"; exit 1; fi
+          if [[ "$n" -ne 15 ]]; then echo "::error::expected 15 artifacts, found $n"; exit 1; fi
           for f in server.jar client.jar standalone-agent.jar; do test -f "dist/$f" || { echo "::error::missing $f"; exit 1; }; done
+          for ext in tar.gz deb pkg.tar.zst zip exe; do
+            case "$ext" in tar.gz) want=3 ;; deb) want=3 ;; pkg.tar.zst) want=2 ;; *) want=2 ;; esac
+            got=$(find dist -maxdepth 1 -type f -name "*.$ext" | wc -l)
+            if [[ "$got" -ne "$want" ]]; then echo "::error::expected $want *.$ext, found $got"; exit 1; fi
+          done
 
       - name: GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -126,21 +188,33 @@ jobs:
           body: |
             **What is inside**
 
+            Three builds: **server** (headless agent), **client** (thin client) and the
+            **GUI** version (standalone agent with a window). Every native package has its own
+            JVM inside -- Java does not need to be installed.
+
             | Artifact | What for |
             |---|---|
             | `server.jar`, `client.jar`, `standalone-agent.jar` | `java -jar …` on any OS with JDK 25 |
-            | `server-ai-agent-server-*-linux-x64.tar.gz`, `server-ai-agent-client-*-linux-x64.tar.gz`, `server-ai-agent-*-linux-x64.tar.gz` | Arch and any glibc Linux: unpack, `bin/server-ai-agent-*`; JVM bundled inside |
-            | `server-ai-agent-server_*_amd64.deb`, `server-ai-agent-client_*_amd64.deb` | Ubuntu/Debian: `sudo dpkg -i` |
-            | `server-ai-agent-client-*-windows-x64.exe` | Windows: thin client installer (into the user profile, no administrator rights) |
-            | `server-ai-agent-client-*-windows-x64.zip` | Windows: portable version, `server-ai-agent-client\server-ai-agent-client.exe` |
+            | `server-ai-agent-server_*_amd64.deb`, `server-ai-agent-client_*_amd64.deb`, `server-ai-agent_*_amd64.deb` | Ubuntu/Debian: `sudo dpkg -i` (server, client, GUI) |
+            | `server-ai-agent-client-*-x86_64.pkg.tar.zst`, `server-ai-agent-*-x86_64.pkg.tar.zst` | Arch Linux: `sudo pacman -U` (client and GUI; the server is not packaged for Arch) |
+            | `server-ai-agent-client-*-windows-x64.exe`, `server-ai-agent-*-windows-x64.exe` | Windows: installers into the user profile, no administrator rights (client and GUI) |
+            | `server-ai-agent-client-*-windows-x64.zip`, `server-ai-agent-*-windows-x64.zip` | Windows: the same two, portable |
+            | `*-linux-x64.tar.gz` (x3) | Any glibc Linux without a package manager: unpack and run `bin/…` |
 
-            Windows client: scripts and the tray work; push-to-talk (evdev) and the clipboard (`wl-paste`)
-            are Linux-only for now -- the client honestly does not declare those capabilities to the server. Needs Python 3 in `PATH` (`python`).
+            The Arch packages install into `/opt/<name>` with a symlink in `/usr/bin` and a
+            desktop entry.
+
+            **On Windows** scripts and the tray work; push-to-talk (evdev) and the clipboard
+            (`wl-paste`) are Linux-only for now -- the client honestly does not declare those
+            capabilities to the server. Needs Python 3 in `PATH` (`python`). The GUI build on
+            Windows is the same agent without its Linux parts (voice, clipboard, `notify-send`);
+            its home is Linux. Windows builds are verified by CI to build, not by hand.
           files: |
             dist/server.jar
             dist/client.jar
             dist/standalone-agent.jar
             dist/*.tar.gz
             dist/*.deb
+            dist/*.pkg.tar.zst
             dist/*.zip
             dist/*.exe

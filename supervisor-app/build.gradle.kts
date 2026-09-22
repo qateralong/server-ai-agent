@@ -35,7 +35,10 @@ extra["jarName"] = "standalone-agent.jar"
 extra["appName"] = "server-ai-agent"
 extra["mainClassName"] = "com.bebebe.agent.supervisor.SupervisorMain"
 extra["javaOptions"] = listOf("--enable-native-access=javafx.graphics", "--enable-native-access=ALL-UNNAMED")
-extra["buildDeb"] = false
-extra["buildWinExe"] = false
+extra["buildDeb"] = true
+extra["buildWinExe"] = true
+extra["buildArchPkg"] = true
+extra["desktopEntry"] = true
+extra["displayName"] = "Server AI Agent"
 extra["appDescription"] = "Server AI Agent: standalone AI agent with a window (Stage 1)"
 apply(from = rootProject.file("gradle/packaging.gradle.kts"))
