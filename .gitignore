@@ -49,6 +49,8 @@ build/release/
 .claude/
 .claude-*
 *.claude.local.*
+# Kept locally as working notes, removed from the repository ("Clearing Project").
+CLAUDE.md
 
 # Original Russian-commented copy of the project (see section 5, Conventions, in CLAUDE.md)
 _original-ru/
