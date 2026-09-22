@@ -23,6 +23,7 @@ import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -161,6 +162,55 @@ class TelegramBridgeTest {
 
         assertTrue(stub.awaitCalls("sendMessage", 1, WAIT));
         assertTrue(textOf(stub.calls("sendMessage").getFirst()).contains("is off"));
+    }
+
+    @Test
+    void voiceMessageIsDownloadedAndHandedToRecognition() {
+        agentSwitch.turnOn();
+        startBridge();
+        List<byte[]> received = new CopyOnWriteArrayList<>();
+        List<String> extensions = new CopyOnWriteArrayList<>();
+        bridge.attachVoiceInput((audio, extension, traceId) -> {
+            received.add(audio);
+            extensions.add(extension);
+            return true;
+        });
+
+        sendVoice(ALLOWED);
+
+        assertTrue(stub.awaitCalls("downloadFile", 1, WAIT), "The voice message was not downloaded");
+        assertEquals("abc", stub.calls("getFile").getFirst().path("file_id").asText());
+        assertEquals(1, received.size());
+        assertArrayEquals(TelegramStubServer.VOICE_BYTES, received.getFirst());
+        assertEquals(List.of(".oga"), extensions, "the decoder needs the format of the file");
+
+        assertTrue(stub.calls("sendMessage").isEmpty(), "nothing to apologise for: the message was accepted");
+    }
+
+    @Test
+    void voiceInputTurnedOffIsRefusedWithoutDownloading() {
+        agentSwitch.turnOn();
+        settings.setVoiceInput(false);
+        startBridge();
+        bridge.attachVoiceInput((audio, extension, traceId) -> true);
+
+        sendVoice(ALLOWED);
+
+        assertTrue(stub.awaitCalls("sendMessage", 1, WAIT));
+        assertTrue(textOf(stub.calls("sendMessage").getFirst()).contains("turned off"));
+        assertTrue(stub.calls("getFile").isEmpty(), "a refused voice message must not be downloaded");
+    }
+
+    @Test
+    void unrecognisedVoiceMessageIsAnsweredInsteadOfSilence() {
+        agentSwitch.turnOn();
+        startBridge();
+        bridge.attachVoiceInput((audio, extension, traceId) -> false);
+
+        sendVoice(ALLOWED);
+
+        assertTrue(stub.awaitCalls("sendMessage", 1, WAIT));
+        assertTrue(textOf(stub.calls("sendMessage").getFirst()).contains("could not make out"));
     }
 
     @Test

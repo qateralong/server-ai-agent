@@ -84,6 +84,7 @@ public final class AgentAssembly implements AutoCloseable {
     private final BackupService backup;
     private final TtsBridge tts;
     private final SttBridge stt;
+    private final com.bebebe.agent.stt.RemoteVoiceIngest telegramVoice;
     private final BuildInfo build;
     private final Path dataDir;
 
@@ -162,6 +163,9 @@ public final class AgentAssembly implements AutoCloseable {
         }
 
         stt = options.background() && options.localVoice() ? Wiring.startStt(config, agentSwitch, this::handleVoice) : null;
+        telegramVoice = options.background() && telegram != null
+                ? Wiring.startTelegramVoice(config, agentSwitch, this::handleVoice, telegram)
+                : null;
         Wiring.wireSettings(settings, llm, telegram, config);
     }
 
@@ -236,7 +240,7 @@ public final class AgentAssembly implements AutoCloseable {
 
     @Override
     public void close() {
-        for (AutoCloseable c : new AutoCloseable[] {watchdog, updates, stt, telegram, tts, library, memory, jobs,
+        for (AutoCloseable c : new AutoCloseable[] {watchdog, updates, stt, telegramVoice, telegram, tts, library, memory, jobs,
                 notes, personas, llm}) {
             if (c == null) {
                 continue;

@@ -63,6 +63,7 @@ public final class SettingsPane extends ScrollPane {
     private final ToggleSwitch voiceReplies = new ToggleSwitch();
     private final ToggleSwitch liveReplies = new ToggleSwitch();
     private final ToggleSwitch typingIndicator = new ToggleSwitch();
+    private final ToggleSwitch voiceInput = new ToggleSwitch();
     private final ToggleSwitch scriptsEnabled = new ToggleSwitch();
 
     private final Label status = new Label();
@@ -233,6 +234,12 @@ public final class SettingsPane extends ScrollPane {
                 + "messages -- only if the setting above is on too.");
         typingHint.getStyleClass().add(Styles.TEXT_SUBTLE);
         typingHint.setWrapText(true);
+        voiceInput.setText("Listen to voice messages sent in Telegram");
+        Label voiceInputHint = new Label("The voice message is downloaded, converted by ffmpeg and "
+                + "recognised by the same whisper.cpp as push-to-talk -- the [stt] section must be "
+                + "filled in. Off -- the bot answers that it does not accept voice.");
+        voiceInputHint.getStyleClass().add(Styles.TEXT_SUBTLE);
+        voiceInputHint.setWrapText(true);
         Label voiceHint = new Label("The text stays, the voice follows. By default only for voice "
                 + "requests; for text ones -- tts.reply_to_text in the config.");
         voiceHint.getStyleClass().add(Styles.TEXT_SUBTLE);
@@ -243,6 +250,7 @@ public final class SettingsPane extends ScrollPane {
                 field(SettingsField.ALLOWED_USERNAMES.title(), new VBox(4, usernames, usernamesHint)),
                 field(SettingsField.PROACTIVE_HINTS.title(), proactiveHints),
                 field(SettingsField.VOICE_REPLIES.title(), new VBox(4, voiceReplies, voiceHint)),
+                field(SettingsField.VOICE_INPUT.title(), new VBox(4, voiceInput, voiceInputHint)),
                 field(SettingsField.LIVE_REPLIES.title(), new VBox(4, liveReplies, liveHint)),
                 field(SettingsField.TYPING_INDICATOR.title(), new VBox(4, typingIndicator, typingHint)),
                 field(SettingsField.SCRIPTS_ENABLED.title(), new VBox(4, scriptsEnabled, scriptsHint)));
@@ -275,6 +283,7 @@ public final class SettingsPane extends ScrollPane {
         voiceReplies.setSelected(settings.voiceReplies());
         liveReplies.setSelected(settings.liveReplies());
         typingIndicator.setSelected(settings.typingIndicator());
+        voiceInput.setSelected(settings.voiceInput());
         scriptsEnabled.setSelected(settings.scriptsEnabled());
     }
 
@@ -296,6 +305,7 @@ public final class SettingsPane extends ScrollPane {
         settings.setVoiceReplies(voiceReplies.isSelected());
         settings.setLiveReplies(liveReplies.isSelected());
         settings.setTypingIndicator(typingIndicator.isSelected());
+        settings.setVoiceInput(voiceInput.isSelected());
         settings.setScriptsEnabled(scriptsEnabled.isSelected());
 
         try {

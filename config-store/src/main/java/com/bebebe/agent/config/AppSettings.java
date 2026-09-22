@@ -29,6 +29,7 @@ public final class AppSettings {
     private boolean voiceReplies;
     private boolean liveReplies;
     private boolean typingIndicator;
+    private boolean voiceInput;
     private boolean scriptsEnabled;
 
     public static final class ProviderSlot {
@@ -62,6 +63,7 @@ public final class AppSettings {
                         boolean voiceReplies,
                         boolean liveReplies,
                         boolean typingIndicator,
+                        boolean voiceInput,
                         boolean scriptsEnabled) {
         this.file = file;
         this.provider = normalizeProvider(provider);
@@ -74,6 +76,7 @@ public final class AppSettings {
         this.voiceReplies = voiceReplies;
         this.liveReplies = liveReplies;
         this.typingIndicator = typingIndicator;
+        this.voiceInput = voiceInput;
         this.scriptsEnabled = scriptsEnabled;
     }
 
@@ -109,6 +112,7 @@ public final class AppSettings {
                 config.section("tts").bool("voice_replies", false),
                 config.section("agent").bool("live_replies", false),
                 config.section("telegram").bool("typing_indicator", true),
+                config.section("telegram").bool("voice_input", true),
                 config.section("agent").bool("scripts_enabled", true));
     }
 
@@ -310,6 +314,22 @@ public final class AppSettings {
         fire(SettingsField.TYPING_INDICATOR);
     }
 
+    public boolean voiceInput() {
+        synchronized (lock) {
+            return voiceInput;
+        }
+    }
+
+    public void setVoiceInput(boolean value) {
+        synchronized (lock) {
+            if (voiceInput == value) {
+                return;
+            }
+            voiceInput = value;
+        }
+        fire(SettingsField.VOICE_INPUT);
+    }
+
     public boolean scriptsEnabled() {
         synchronized (lock) {
             return scriptsEnabled;
@@ -342,6 +362,7 @@ public final class AppSettings {
             values.put(SettingsField.VOICE_REPLIES.path(), voiceReplies);
             values.put(SettingsField.LIVE_REPLIES.path(), liveReplies);
             values.put(SettingsField.TYPING_INDICATOR.path(), typingIndicator);
+            values.put(SettingsField.VOICE_INPUT.path(), voiceInput);
             values.put(SettingsField.SCRIPTS_ENABLED.path(), scriptsEnabled);
         }
         ConfigFileWriter.update(file, values);
@@ -386,6 +407,7 @@ public final class AppSettings {
             case VOICE_REPLIES -> voiceReplies();
             case LIVE_REPLIES -> liveReplies();
             case TYPING_INDICATOR -> typingIndicator();
+            case VOICE_INPUT -> voiceInput();
             case SCRIPTS_ENABLED -> scriptsEnabled();
         };
     }

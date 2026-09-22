@@ -114,6 +114,13 @@ poll_timeout_seconds = 30
 # Settings in the chat.
 typing_indicator = true
 
+# Accept voice messages sent in the chat: the file is downloaded from Telegram,
+# converted to WAV by ffmpeg and recognised by the same whisper.cpp as
+# push-to-talk -- so the [stt] section below has to be filled in. Off -- the bot
+# answers that it does not accept voice. Edited from the window and from ⚙️
+# Settings in the chat.
+voice_input = true
+
 # ---------------------------------------------------------------------------
 # Speech recognition: push-to-talk on a key + local whisper.cpp.
 # Read by the code. Details -- section 3.8 in CLAUDE.md.
@@ -140,6 +147,10 @@ hotkey_device = ""
 # --- microphone recording ---
 
 arecord_binary = "arecord"
+
+# Used to convert voice messages from Telegram (Ogg/Opus) into the 16 kHz mono
+# WAV that whisper.cpp takes. The same binary as in [tts].
+ffmpeg_binary = "ffmpeg"
 
 # Empty -- the default device. List: arecord -l, format "hw:2,0".
 audio_device = ""

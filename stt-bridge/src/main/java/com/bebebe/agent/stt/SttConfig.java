@@ -18,6 +18,7 @@ public record SttConfig(
         Path modelPath,
         String language,
         int threads,
+        String ffmpegBinary,
         Duration maxRecording
 ) {
 
@@ -48,6 +49,7 @@ public record SttConfig(
                 expand(section.string("model_path", "")),
                 section.string("language", "ru"),
                 section.integer("threads", Math.max(1, Runtime.getRuntime().availableProcessors() / 2)),
+                section.string("ffmpeg_binary", "ffmpeg"),
                 section.seconds("max_seconds", DEFAULT_MAX_RECORDING));
     }
 

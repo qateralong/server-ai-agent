@@ -28,6 +28,7 @@ public final class SettingsScreens {
         boolean voice = settings.voiceReplies();
         boolean live = settings.liveReplies();
         boolean typing = settings.typingIndicator();
+        boolean voiceIn = settings.voiceInput();
         boolean scripts = settings.scriptsEnabled();
 
         String text = """
@@ -38,6 +39,7 @@ public final class SettingsScreens {
                 👤 Access: %s
                 💡 Hints: %s
                 🔊 Voice replies: %s
+                🎤 Voice messages from you: %s
                 💬 Several short messages: %s
                 ⌨️ "Typing..." indicator: %s
                 🐍 Scripts: %s
@@ -52,6 +54,7 @@ public final class SettingsScreens {
                 usernames.isEmpty() ? "no one (the bot is silent)" : String.valueOf(usernames.size()),
                 hints ? "on" : "off",
                 voice ? "on" : "off",
+                voiceIn ? "accepted" : "off",
                 live ? "on" : "off",
                 typing ? "on" : "off",
                 scripts ? "allowed" : "off",
@@ -83,6 +86,9 @@ public final class SettingsScreens {
                 List.of(InlineKeyboardButton.of(
                         voice ? "🔊 Disable voice replies" : "🔊 Enable voice replies",
                         CallbackData.voiceReplies(!voice).encode())),
+                List.of(InlineKeyboardButton.of(
+                        voiceIn ? "🎤 Do not accept voice messages" : "🎤 Accept voice messages",
+                        CallbackData.voiceInput(!voiceIn).encode())),
                 List.of(InlineKeyboardButton.of(
                         live ? "💬 One message instead of several" : "💬 Several short messages",
                         CallbackData.liveReplies(!live).encode())),

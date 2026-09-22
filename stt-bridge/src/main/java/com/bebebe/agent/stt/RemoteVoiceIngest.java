@@ -19,6 +19,7 @@ public final class RemoteVoiceIngest implements AutoCloseable {
     private final SttConfig config;
     private final AgentSwitch agentSwitch;
     private final TranscriptionPipeline pipeline;
+    private final AudioConverter converter;
     private final boolean ready;
 
     public RemoteVoiceIngest(SttConfig config, AgentSwitch agentSwitch, Consumer<UserMessage> sink) {
@@ -29,19 +30,51 @@ public final class RemoteVoiceIngest implements AutoCloseable {
         this.config = config;
         this.agentSwitch = agentSwitch;
         this.pipeline = new TranscriptionPipeline(transcriber, sink, "voice-ingest");
+        this.converter = new AudioConverter(config.ffmpegBinary());
         Optional<String> missing = config.whatIsMissingForTranscription();
         this.ready = config.enabled() && missing.isEmpty();
         if (!config.enabled()) {
-            log.info("Voice intake from clients disabled (stt.enabled = false)");
+            log.info("Voice intake disabled (stt.enabled = false)");
         } else if (missing.isPresent()) {
-            log.warn("Voice from clients will be discarded: {}", missing.get());
+            log.warn("Incoming voice will be discarded: {}", missing.get());
         } else {
-            log.info("Voice intake from clients ready: {}", config);
+            log.info("Voice intake ready: {}", config);
         }
     }
 
     public boolean isReady() {
         return ready;
+    }
+
+    /**
+     * The same intake for audio that is not a WAV yet -- a Telegram voice message is Ogg/Opus,
+     * and whisper.cpp takes nothing else but WAV.
+     */
+    public boolean acceptEncoded(byte[] encoded, String extension, String traceId, String from) {
+        String trace = traceId == null || traceId.isBlank() ? TraceContext.newId() : traceId;
+        try (TraceContext.Scope ignored = TraceContext.open(trace)) {
+            if (!ready) {
+                log.warn("Voice from «{}» discarded: transcription not configured", from);
+                return false;
+            }
+            if (!agentSwitch.isOn()) {
+                log.info("Voice from «{}» received, but the agent is off -- not transcribing", from);
+                return false;
+            }
+            if (encoded == null || encoded.length == 0) {
+                return false;
+            }
+            byte[] wav = converter.toWav(encoded, extension);
+            if (wav.length == 0) {
+                log.warn("Voice from «{}» could not be converted to WAV -- is ffmpeg installed?", from);
+                return false;
+            }
+            return accept(wav, trace, from);
+        }
+    }
+
+    public boolean converterAvailable() {
+        return converter.isAvailable();
     }
 
     public boolean accept(byte[] wav, String traceId, String from) {

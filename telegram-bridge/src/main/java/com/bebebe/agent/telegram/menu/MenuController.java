@@ -242,6 +242,7 @@ public final class MenuController {
             case "user" -> user(data);
             case "hints" -> hints(data);
             case "voice" -> voiceReplies(data);
+            case "vin" -> voiceInput(data);
             case "live" -> liveReplies(data);
             case "typing" -> typingIndicator(data);
             case "scripts" -> scriptsEnabled(data);
@@ -397,6 +398,17 @@ public final class MenuController {
         settings.setScriptsEnabled(enable);
         return MenuResponse.show(SettingsScreens.root(settings),
                 persist(enable ? "Scripts on" : "Scripts off"));
+    }
+
+    private MenuResponse voiceInput(CallbackData data) {
+        Optional<String> target = data.arg(1);
+        if (target.isEmpty() || !(target.get().equals("on") || target.get().equals("off"))) {
+            return MenuResponse.toast("Unknown button");
+        }
+        boolean enable = target.get().equals("on");
+        settings.setVoiceInput(enable);
+        return MenuResponse.show(SettingsScreens.root(settings),
+                persist(enable ? "Voice messages accepted" : "Voice messages off"));
     }
 
     private MenuResponse typingIndicator(CallbackData data) {

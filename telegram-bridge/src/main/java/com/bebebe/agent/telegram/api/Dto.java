@@ -57,6 +57,11 @@ public final class Dto {
     public record Voice(String fileId, int duration, String mimeType) {
     }
 
+    /** Answer of getFile: {@code filePath} is relative to the file root, not to the API root. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record File(String fileId, String filePath, Long fileSize) {
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record CallbackQuery(String id, User from, Message message, String data) {
     }

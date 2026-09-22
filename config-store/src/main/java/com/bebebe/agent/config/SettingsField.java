@@ -32,6 +32,9 @@ public enum SettingsField {
     TYPING_INDICATOR("telegram", "typing_indicator", Apply.LIVE,
             "\"Typing...\" indicator", false),
 
+    VOICE_INPUT("telegram", "voice_input", Apply.LIVE,
+            "Accept voice messages", false),
+
     SCRIPTS_ENABLED("agent", "scripts_enabled", Apply.LIVE,
             "Scripts (actions on the computer)", false);
 

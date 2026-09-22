@@ -158,6 +158,12 @@ public final class TelegramBridge implements AutoCloseable {
         this.speakTextReplies = speakTextReplies;
     }
 
+    private volatile VoiceInput voiceInput;
+
+    public void attachVoiceInput(VoiceInput voiceInput) {
+        this.voiceInput = voiceInput;
+    }
+
     public Optional<Long> lastChatId() {
         return Optional.ofNullable(lastChatId);
     }
@@ -431,9 +437,7 @@ public final class TelegramBridge implements AutoCloseable {
         }
 
         if (message.isVoice()) {
-            send(chatId, agentSwitch.isOn()
-                    ? "🎤 Voice messages are not handled yet."
-                    : OFF_REPLY);
+            onVoiceMessage(chatId, message);
             return;
         }
 
@@ -445,6 +449,66 @@ public final class TelegramBridge implements AutoCloseable {
             return;
         }
         replyAsAgent(chatId, message.text());
+    }
+
+    private void onVoiceMessage(long chatId, Message message) {
+        if (!agentSwitch.isOn()) {
+            send(chatId, OFF_REPLY);
+            return;
+        }
+        if (!settings.voiceInput()) {
+            send(chatId, "🎤 Voice messages are turned off. Turn them on: /menu -> \u2699\ufe0f Settings.");
+            return;
+        }
+        if (voiceInput == null) {
+            send(chatId, "🎤 Voice messages are not available: speech recognition is not set up"
+                    + " (whisper.cpp in the [stt] section of the config).");
+            return;
+        }
+
+        String traceId = TraceContext.current().orElse(null);
+        var voice = message.voice();
+        ttsExecutor.submit(TraceContext.wrap(traceId, () -> downloadAndTranscribe(chatId, voice, traceId)));
+    }
+
+    private void downloadAndTranscribe(long chatId, com.bebebe.agent.telegram.api.Dto.Voice voice, String traceId) {
+        byte[] audio;
+        String path;
+        try {
+            var file = api.getFile(voice.fileId());
+            if (file == null || file.filePath() == null || file.filePath().isBlank()) {
+                send(chatId, "🎤 Telegram did not give me the file of this voice message.");
+                return;
+            }
+            if (file.fileSize() != null && file.fileSize() > TelegramApi.MAX_DOWNLOAD_BYTES) {
+
+                send(chatId, "🎤 This voice message is too long: a bot cannot download more than 20 MB.");
+                return;
+            }
+            path = file.filePath();
+            audio = api.downloadFile(path);
+        } catch (TelegramApiException e) {
+            log.warn("Voice message from chat {} not downloaded: {}", chatId, e.getMessage());
+            send(chatId, "🎤 Could not download the voice message: " + e.getMessage());
+            return;
+        }
+
+        log.atInfo().addKeyValue("event", "voice.received")
+                .addKeyValue("chat_id", chatId)
+                .addKeyValue("bytes", audio.length)
+                .addKeyValue("seconds", voice.duration())
+                .log("Voice message from chat {}: {} bytes, {} s", chatId, audio.length, voice.duration());
+
+        if (!voiceInput.accept(audio, extensionOf(path), traceId)) {
+
+            send(chatId, "🎤 I could not make out the voice message. Try again or write it as text.");
+        }
+    }
+
+    static String extensionOf(String filePath) {
+        int slash = filePath.lastIndexOf('/');
+        int dot = filePath.lastIndexOf('.');
+        return dot > slash && dot < filePath.length() - 1 ? filePath.substring(dot) : ".oga";
     }
 
     private void handleCommand(long chatId, String command) {

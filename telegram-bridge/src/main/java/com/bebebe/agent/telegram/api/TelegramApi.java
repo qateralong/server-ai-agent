@@ -39,6 +39,7 @@ public final class TelegramApi implements AutoCloseable {
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     private final String apiRoot;
+    private final String fileRoot;
     private final HttpClient http;
 
     public TelegramApi(String botToken) {
@@ -47,6 +48,8 @@ public final class TelegramApi implements AutoCloseable {
 
     public TelegramApi(String botToken, String baseUrl) {
         this.apiRoot = baseUrl + "/bot" + botToken + "/";
+
+        this.fileRoot = baseUrl + "/file/bot" + botToken + "/";
         this.http = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(15))
                 .followRedirects(HttpClient.Redirect.NORMAL)
@@ -127,6 +130,41 @@ public final class TelegramApi implements AutoCloseable {
         if (markup != null) {
             body.set("reply_markup", mapper.valueToTree(markup));
         }
+    }
+
+    /** Bot API limit: a bot can download files no larger than 20 MB. */
+    public static final long MAX_DOWNLOAD_BYTES = 20L * 1024 * 1024;
+
+    public Dto.File getFile(String fileId) {
+        ObjectNode body = mapper.createObjectNode();
+        body.put("file_id", fileId);
+        return call("getFile", body, Duration.ofSeconds(30), Dto.File.class);
+    }
+
+    /**
+     * Downloads what getFile pointed at. Unlike every other call this one does not go through
+     * the API root and its answer is the file itself, not a JSON envelope.
+     */
+    public byte[] downloadFile(String filePath) {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(fileRoot + filePath))
+                .timeout(Duration.ofSeconds(120))
+                .GET()
+                .build();
+        HttpResponse<byte[]> response;
+        try {
+            response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
+        } catch (IOException e) {
+            throw new TelegramApiException("Network unavailable while downloading " + filePath, e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new TelegramApiException("Download of " + filePath + " interrupted", e);
+        }
+        if (response.statusCode() != 200) {
+            throw new TelegramApiException("Download of " + filePath + " -> HTTP " + response.statusCode(),
+                    null, response.statusCode());
+        }
+        return response.body();
     }
 
     public Message sendVoice(long chatId, java.nio.file.Path ogg) {

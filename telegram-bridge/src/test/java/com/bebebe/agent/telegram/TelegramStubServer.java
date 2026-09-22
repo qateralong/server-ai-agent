@@ -28,6 +28,11 @@ final class TelegramStubServer implements AutoCloseable {
     private final Map<String, List<JsonNode>> calls = new ConcurrentHashMap<>();
     private final AtomicInteger messageIds = new AtomicInteger(1000);
 
+    /** What a voice-message download returns -- the content does not matter, only that it arrives. */
+    static final byte[] VOICE_BYTES = "OggS fake voice message".getBytes(StandardCharsets.UTF_8);
+
+    static final String VOICE_FILE_PATH = "voice/file_42.oga";
+
     TelegramStubServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/bot" + TOKEN + "/", exchange -> {
@@ -49,11 +54,23 @@ final class TelegramStubServer implements AutoCloseable {
                 case "getMe" -> """
                         {"ok":true,"result":{"id":1,"is_bot":true,"first_name":"Тест","username":"test_bot"}}""";
                 case "getUpdates" -> updatesResponse();
+                case "getFile" -> """
+                        {"ok":true,"result":{"file_id":"%s","file_path":"%s","file_size":%d}}"""
+                        .formatted(request.path("file_id").asText(""), VOICE_FILE_PATH, VOICE_BYTES.length);
                 case "sendMessage", "editMessageText" -> """
                         {"ok":true,"result":{"message_id":%d,"date":0,"chat":{"id":%s,"type":"private"}}}"""
                         .formatted(messageIds.incrementAndGet(), request.path("chat_id").asText("0"));
                 default -> "{\"ok\":true,\"result\":true}";
             });
+        });
+
+        server.createContext("/file/bot" + TOKEN + "/", exchange -> {
+            calls.computeIfAbsent("downloadFile", key -> new CopyOnWriteArrayList<>())
+                    .add(MAPPER.createObjectNode().put("path", exchange.getRequestURI().getPath()));
+            exchange.sendResponseHeaders(200, VOICE_BYTES.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(VOICE_BYTES);
+            }
         });
         server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
         server.start();

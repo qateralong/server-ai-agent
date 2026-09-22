@@ -250,6 +250,23 @@ class SettingsMenuTest {
     }
 
     @Test
+    void voiceInputToggleIsSeparateFromVoiceReplies() {
+
+        assertTrue(settings.voiceInput());
+        assertFalse(settings.voiceReplies());
+
+        MenuResponse off = controller.handle(CallbackData.voiceInput(false));
+        assertFalse(settings.voiceInput());
+        assertFalse(settings.voiceReplies(), "voice replies untouched");
+        assertEquals("Voice messages off", off.toast());
+        assertTrue(off.screen().text().contains("Voice messages from you: off"));
+        assertFalse(AppSettings.from(AppConfig.load(settings.file())).voiceInput(), "written to file");
+
+        controller.handle(CallbackData.voiceInput(true));
+        assertTrue(settings.voiceInput());
+    }
+
+    @Test
     void allSettingsButtonsFitTheLimit() {
         List<CallbackData> all = List.of(
                 CallbackData.modelList(),
@@ -260,7 +277,8 @@ class SettingsMenuTest {
                 CallbackData.hints(true),
                 CallbackData.hints(false),
                 CallbackData.liveReplies(true),
-                CallbackData.typingIndicator(false));
+                CallbackData.typingIndicator(false),
+                CallbackData.voiceInput(true));
 
         for (CallbackData data : all) {
             assertTrue(data.byteSize() <= CallbackData.WARN_BYTES,

@@ -272,6 +272,40 @@ public final class Wiring {
         return bridge;
     }
 
+    /**
+     * Voice messages from the chat. The same whisper.cpp as push-to-talk, but its own intake:
+     * Telegram gives Ogg/Opus, and the recording arrives whole instead of key-down to key-up.
+     * Returns null when [stt] cannot transcribe -- the bridge then says so honestly in the chat.
+     */
+    public static com.bebebe.agent.stt.RemoteVoiceIngest startTelegramVoice(
+            AppConfig config,
+            AgentSwitch agentSwitch,
+            java.util.function.Consumer<UserMessage> voiceHandler,
+            TelegramBridge telegram) {
+        SttConfig sttConfig;
+        try {
+            sttConfig = SttConfig.from(config.section(SttConfig.SECTION));
+        } catch (RuntimeException e) {
+            log.error("Section [stt] is invalid: {}", e.getMessage());
+            return null;
+        }
+        var ingest = new com.bebebe.agent.stt.RemoteVoiceIngest(sttConfig, agentSwitch, voiceHandler::accept);
+        if (!ingest.isReady()) {
+            log.info("Voice messages from Telegram will not be recognised: [stt] is not configured");
+            return null;
+        }
+        if (!ingest.converterAvailable()) {
+            log.warn("Voice messages from Telegram will not be recognised: ffmpeg not found ({})",
+                    sttConfig.ffmpegBinary());
+            return null;
+        }
+        telegram.attachVoiceInput((audio, extension, traceId) ->
+                ingest.acceptEncoded(audio, extension, traceId, "Telegram"));
+        log.info("Voice messages from Telegram: accepted, recognised by {}",
+                sttConfig.whisperBinary().getFileName());
+        return ingest;
+    }
+
     public static void wireNotifier(AgentCore core, TelegramBridge telegram) {
         core.setNotifier(outbound -> {
             if (telegram == null) {
@@ -336,7 +370,8 @@ public final class Wiring {
                 }
                 case TELEGRAM_BOT_TOKEN -> reconnectTelegram(settings, telegram, config);
 
-                case ALLOWED_USERNAMES, PROACTIVE_HINTS, VOICE_REPLIES, LIVE_REPLIES, TYPING_INDICATOR, SCRIPTS_ENABLED -> { }
+                case ALLOWED_USERNAMES, PROACTIVE_HINTS, VOICE_REPLIES, LIVE_REPLIES, TYPING_INDICATOR,
+                     VOICE_INPUT, SCRIPTS_ENABLED -> { }
             }
         });
     }
