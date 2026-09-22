@@ -1,5 +1,6 @@
 package com.bebebe.agent.ui;
 
+import com.bebebe.agent.i18n.Messages;
 import atlantafx.base.theme.Styles;
 import com.bebebe.agent.notes.ChecklistItem;
 import com.bebebe.agent.notes.NoteDocument;
@@ -55,11 +56,11 @@ public final class NotesPane extends BorderPane {
         });
         list.setPrefWidth(260);
 
-        Button newList = new Button("📋 New list");
+        Button newList = new Button(Messages.t("📋 New list"));
         newList.setOnAction(e -> create(NoteKind.LIST));
-        Button newNote = new Button("📝 New note");
+        Button newNote = new Button(Messages.t("📝 New note"));
         newNote.setOnAction(e -> create(NoteKind.NOTE));
-        Button refresh = new Button("Refresh");
+        Button refresh = new Button(Messages.t("Refresh"));
         refresh.setOnAction(e -> reload());
         HBox actions = new HBox(8, newList, newNote, refresh);
 
@@ -117,12 +118,12 @@ public final class NotesPane extends BorderPane {
         } else {
             renderNote(doc);
         }
-        Button delete = new Button("🗑 Delete " + (doc.kind() == NoteKind.LIST ? "list" : "note"));
+        Button delete = new Button(Messages.t("🗑 Delete ") + (doc.kind() == NoteKind.LIST ? "list" : "note"));
         delete.getStyleClass().add(Styles.DANGER);
         delete.setOnAction(e -> {
             store.delete(doc.id());
             selectedId = null;
-            status.setText("Deleted: " + doc.title());
+            status.setText(Messages.t("Deleted: ") + doc.title());
         });
         detail.getChildren().addAll(Ui.separator(), delete);
     }
@@ -134,7 +135,7 @@ public final class NotesPane extends BorderPane {
             box.setSelected(item.done());
             box.setOnAction(e -> run(() -> store.setDone(doc.id(), item.index(), box.isSelected()),
                     (box.isSelected() ? "Done: " : "Unchecked: ") + item.text()));
-            Button remove = new Button("✖");
+            Button remove = new Button(Messages.t("✖"));
             remove.getStyleClass().addAll(Styles.BUTTON_ICON, Styles.FLAT);
             remove.setOnAction(e -> run(() -> store.removeItem(doc.id(), item.index()), "Item removed: " + item.text()));
             HBox row = new HBox(8, box, Ui.spacer(), remove);
@@ -145,7 +146,7 @@ public final class NotesPane extends BorderPane {
             items.getChildren().add(Ui.hint("The list is empty."));
         }
         TextField newItem = new TextField();
-        newItem.setPromptText("New item -- press Enter to add");
+        newItem.setPromptText(Messages.t("New item -- press Enter to add"));
         newItem.setOnAction(e -> {
             String text = newItem.getText().strip();
             if (!text.isEmpty()) {
@@ -160,7 +161,7 @@ public final class NotesPane extends BorderPane {
         TextArea text = new TextArea(doc.body());
         text.setWrapText(true);
         text.setPrefRowCount(18);
-        Button save = new Button("Save");
+        Button save = new Button(Messages.t("Save"));
         save.getStyleClass().add(Styles.ACCENT);
         save.setOnAction(e -> run(() -> store.replaceBody(doc.id(), text.getText()), "Saved: " + doc.title()));
         detail.getChildren().addAll(text, new HBox(save));
@@ -170,7 +171,7 @@ public final class NotesPane extends BorderPane {
         TextInputDialog dialog = new TextInputDialog();
         dialog.setTitle(kind == NoteKind.LIST ? "New list" : "New note");
         dialog.setHeaderText(null);
-        dialog.setContentText("Title:");
+        dialog.setContentText(Messages.t("Title:"));
         Optional<String> name = dialog.showAndWait().map(String::strip).filter(s -> !s.isEmpty());
         name.ifPresent(title -> run(() -> {
             NoteDocument created = kind == NoteKind.LIST
@@ -186,7 +187,7 @@ public final class NotesPane extends BorderPane {
             status.setText(done);
         } catch (RuntimeException e) {
             log.warn("Notes: {}", e.toString());
-            status.setText("Error: " + e.getMessage());
+            status.setText(Messages.t("Error: ") + e.getMessage());
         }
     }
 }

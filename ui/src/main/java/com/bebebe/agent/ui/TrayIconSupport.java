@@ -1,5 +1,6 @@
 package com.bebebe.agent.ui;
 
+import com.bebebe.agent.i18n.Messages;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,9 +27,9 @@ final class TrayIconSupport {
                 return false;
             }
             PopupMenu menu = new PopupMenu();
-            MenuItem show = new MenuItem("Show window");
+            MenuItem show = new MenuItem(Messages.t("Show window"));
             show.addActionListener(e -> showWindow.run());
-            MenuItem exit = new MenuItem("Quit the agent");
+            MenuItem exit = new MenuItem(Messages.t("Quit the agent"));
             exit.addActionListener(e -> quit.run());
             menu.add(show);
             menu.addSeparator();

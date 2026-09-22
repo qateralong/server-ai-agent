@@ -1,5 +1,6 @@
 package com.bebebe.agent.telegram.menu;
 
+import com.bebebe.agent.i18n.Messages;
 import com.bebebe.agent.scheduler.Job;
 import com.bebebe.agent.scheduler.JobStatus;
 import com.bebebe.agent.telegram.api.Dto.InlineKeyboardButton;
@@ -18,14 +19,14 @@ public final class ReminderScreens {
     }
 
     public static MenuScreen root(int pending, int history) {
-        String text = """
+        String text = Messages.t("""
                 <b>%s</b>
 
                 📅 Active: %d
                 🗄 In history: %d
 
                 <i>To set one, just write «напомни через час ...» or \
-                «каждое утро в 9 ...».</i>""".formatted(MenuSection.REMINDERS.title(), pending, history);
+                «каждое утро в 9 ...».</i>""").formatted(MenuSection.REMINDERS.title(), pending, history);
 
         return new MenuScreen(MenuSection.REMINDERS, text, InlineKeyboardMarkup.of(List.of(
                 List.of(InlineKeyboardButton.of("📅 Active", CallbackData.remindersActive(0).encode())),
@@ -45,7 +46,7 @@ public final class ReminderScreens {
         String title = active ? "📅 Active" : "🗄 History";
         if (jobs.isEmpty()) {
             return new MenuScreen(MenuSection.REMINDERS,
-                    "<b>%s</b>\n\n%s".formatted(title, active ? "Nothing scheduled." : "History is empty."),
+                    Messages.t("<b>%s</b>\n\n%s").formatted(title, active ? "Nothing scheduled." : "History is empty."),
                     InlineKeyboardMarkup.of(List.of(backRow(CallbackData.section(MenuSection.REMINDERS)))));
         }
 
@@ -66,7 +67,7 @@ public final class ReminderScreens {
                 pager.add(InlineKeyboardButton.of("◀️",
                         (active ? CallbackData.remindersActive(current - 1) : CallbackData.remindersHistory(current - 1)).encode()));
             }
-            pager.add(InlineKeyboardButton.of("%d / %d".formatted(current + 1, pages), CallbackData.noop().encode()));
+            pager.add(InlineKeyboardButton.of(Messages.t("%d / %d").formatted(current + 1, pages), CallbackData.noop().encode()));
             if (current < pages - 1) {
                 pager.add(InlineKeyboardButton.of("▶️",
                         (active ? CallbackData.remindersActive(current + 1) : CallbackData.remindersHistory(current + 1)).encode()));
@@ -81,7 +82,7 @@ public final class ReminderScreens {
 
         String legend = active ? "" : "\n\n✅ fired · ⏰ missed, caught up · ✖️ cancelled";
         return new MenuScreen(MenuSection.REMINDERS,
-                "<b>%s</b>\n\nTotal: %d.%s".formatted(title, jobs.size(), legend),
+                Messages.t("<b>%s</b>\n\nTotal: %d.%s").formatted(title, jobs.size(), legend),
                 InlineKeyboardMarkup.of(rows));
     }
 
@@ -112,7 +113,7 @@ public final class ReminderScreens {
 
     public static MenuScreen clearConfirm(int count) {
         return new MenuScreen(MenuSection.REMINDERS,
-                "Delete history (%d entries)? Active reminders are not affected.".formatted(count),
+                Messages.t("Delete history (%d entries)? Active reminders are not affected.").formatted(count),
                 InlineKeyboardMarkup.of(List.of(List.of(
                         InlineKeyboardButton.of("🗑 Yes", CallbackData.remindersClearHistory(true).encode()),
                         InlineKeyboardButton.of("Cancel", CallbackData.remindersHistory(0).encode())))));

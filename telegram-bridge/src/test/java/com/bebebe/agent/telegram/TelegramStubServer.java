@@ -33,6 +33,14 @@ final class TelegramStubServer implements AutoCloseable {
 
     static final String VOICE_FILE_PATH = "voice/file_42.oga";
 
+    /** What a document download returns; the path decides which of the two getFile answers. */
+    static final byte[] DOCUMENT_BYTES = "Answer as a pirate.\nNever apologise.".getBytes(StandardCharsets.UTF_8);
+
+    static final String DOCUMENT_FILE_PATH = "documents/file_7.txt";
+
+    /** Set by a test that wants getFile to point at the document instead of the voice file. */
+    volatile boolean serveDocument;
+
     TelegramStubServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/bot" + TOKEN + "/", exchange -> {
@@ -56,7 +64,9 @@ final class TelegramStubServer implements AutoCloseable {
                 case "getUpdates" -> updatesResponse();
                 case "getFile" -> """
                         {"ok":true,"result":{"file_id":"%s","file_path":"%s","file_size":%d}}"""
-                        .formatted(request.path("file_id").asText(""), VOICE_FILE_PATH, VOICE_BYTES.length);
+                        .formatted(request.path("file_id").asText(""),
+                                serveDocument ? DOCUMENT_FILE_PATH : VOICE_FILE_PATH,
+                                serveDocument ? DOCUMENT_BYTES.length : VOICE_BYTES.length);
                 case "sendMessage", "editMessageText" -> """
                         {"ok":true,"result":{"message_id":%d,"date":0,"chat":{"id":%s,"type":"private"}}}"""
                         .formatted(messageIds.incrementAndGet(), request.path("chat_id").asText("0"));
@@ -67,9 +77,10 @@ final class TelegramStubServer implements AutoCloseable {
         server.createContext("/file/bot" + TOKEN + "/", exchange -> {
             calls.computeIfAbsent("downloadFile", key -> new CopyOnWriteArrayList<>())
                     .add(MAPPER.createObjectNode().put("path", exchange.getRequestURI().getPath()));
-            exchange.sendResponseHeaders(200, VOICE_BYTES.length);
+            byte[] body = exchange.getRequestURI().getPath().endsWith(".txt") ? DOCUMENT_BYTES : VOICE_BYTES;
+            exchange.sendResponseHeaders(200, body.length);
             try (OutputStream out = exchange.getResponseBody()) {
-                out.write(VOICE_BYTES);
+                out.write(body);
             }
         });
         server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());

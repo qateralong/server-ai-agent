@@ -1,5 +1,6 @@
 package com.bebebe.agent.telegram.menu;
 
+import com.bebebe.agent.i18n.Messages;
 import com.bebebe.agent.telegram.api.Dto.InlineKeyboardButton;
 import com.bebebe.agent.telegram.api.Dto.InlineKeyboardMarkup;
 import com.bebebe.agent.telegram.api.TelegramApi;
@@ -51,13 +52,13 @@ final class StatusScreens {
     }
 
     static MenuScreen desktopStub() {
-        String text = """
+        String text = Messages.t("""
                 <b>%s</b>
 
                 In the standalone build the status is shown in the application window: the main \
                 thing there is "is there a network", and without a network this message would not arrive.
 
-                <i>In server mode (server-app) this section works here.</i>""".formatted(MenuSection.STATUS.title());
+                <i>In server mode (server-app) this section works here.</i>""").formatted(MenuSection.STATUS.title());
         return new MenuScreen(MenuSection.STATUS, text, InlineKeyboardMarkup.of(List.of(MenuRenderer.navigationRow())));
     }
 

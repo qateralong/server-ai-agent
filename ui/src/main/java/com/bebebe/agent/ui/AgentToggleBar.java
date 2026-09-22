@@ -1,5 +1,6 @@
 package com.bebebe.agent.ui;
 
+import com.bebebe.agent.i18n.Messages;
 import atlantafx.base.theme.Styles;
 import com.bebebe.agent.core.ActivityMonitor;
 import com.bebebe.agent.core.AgentState;
@@ -62,7 +63,7 @@ public final class AgentToggleBar extends VBox {
         this.agentSwitch = agentSwitch;
         this.activity = activity;
 
-        Label title = new Label("Agent");
+        Label title = new Label(Messages.t("Agent"));
         title.getStyleClass().add(Styles.TEXT_BOLD);
         stateLabel.getStyleClass().add(Styles.TEXT_BOLD);
         activityLabel.getStyleClass().addAll(Styles.TEXT_SUBTLE);
@@ -144,7 +145,7 @@ public final class AgentToggleBar extends VBox {
         if (value) {
             if (!labelShown) {
                 labelShown = true;
-                activityLabel.setText("· " + what);
+                activityLabel.setText(Messages.t("· ") + what);
                 Transitions.fadeIn(activityLabel);
             } else {
                 Transitions.crossfadeText(activityLabel, "· " + what);

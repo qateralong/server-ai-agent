@@ -1,5 +1,6 @@
 package com.bebebe.agent.telegram.menu;
 
+import com.bebebe.agent.i18n.Messages;
 import com.bebebe.agent.notes.ChecklistItem;
 import com.bebebe.agent.notes.NoteDocument;
 import com.bebebe.agent.notes.NoteKind;
@@ -21,14 +22,14 @@ public final class NotesScreens {
     }
 
     public static MenuScreen root(int lists, int notes, String dir) {
-        String text = """
+        String text = Messages.t("""
                 <b>%s</b>
 
                 📋 Lists: %d
                 📝 Notes: %d
 
                 <i>Files: <code>%s</code> -- can be opened as a vault in Obsidian.
-                By words: «запиши в список покупок молоко», «покажи заметку про отпуск».</i>"""
+                By words: «запиши в список покупок молоко», «покажи заметку про отпуск».</i>""")
                 .formatted(MenuSection.NOTES.title(), lists, notes, TelegramApi.escapeHtml(dir));
         return new MenuScreen(MenuSection.NOTES, text, InlineKeyboardMarkup.of(List.of(
                 List.of(InlineKeyboardButton.of("➕ Create", CallbackData.notesCreate().encode()),
@@ -45,23 +46,23 @@ public final class NotesScreens {
     }
 
     public static MenuScreen awaitingTitle(NoteKind kind) {
-        return new MenuScreen(MenuSection.NOTES, """
+        return new MenuScreen(MenuSection.NOTES, Messages.t("""
                 <b>%s</b>
 
                 Send the title in the next message.%s
 
-                Cancel: /cancel""".formatted(kind.title(),
+                Cancel: /cancel""").formatted(kind.title(),
                         kind == NoteKind.NOTE ? " The text can be added later with the \"✏️ Append\" button." : ""),
                 InlineKeyboardMarkup.of(List.of(backRow(CallbackData.section(MenuSection.NOTES)))));
     }
 
     public static MenuScreen awaitingText(NoteDocument doc, int page) {
-        return new MenuScreen(MenuSection.NOTES, """
+        return new MenuScreen(MenuSection.NOTES, Messages.t("""
                 <b>%s</b>
 
                 %s
 
-                Cancel: /cancel""".formatted(TelegramApi.escapeHtml(doc.title()),
+                Cancel: /cancel""").formatted(TelegramApi.escapeHtml(doc.title()),
                         doc.kind() == NoteKind.LIST
                                 ? "Send the text of the new item in the next message."
                                 : "Send the text -- it will be appended to the end of the note."),
@@ -87,14 +88,14 @@ public final class NotesScreens {
             if (current > 0) {
                 pager.add(InlineKeyboardButton.of("◀️", CallbackData.notesList(current - 1).encode()));
             }
-            pager.add(InlineKeyboardButton.of("%d / %d".formatted(current + 1, pages), CallbackData.noop().encode()));
+            pager.add(InlineKeyboardButton.of(Messages.t("%d / %d").formatted(current + 1, pages), CallbackData.noop().encode()));
             if (current < pages - 1) {
                 pager.add(InlineKeyboardButton.of("▶️", CallbackData.notesList(current + 1).encode()));
             }
             rows.add(pager);
         }
         rows.add(backRow(CallbackData.section(MenuSection.NOTES)));
-        return new MenuScreen(MenuSection.NOTES, "<b>📂 Open</b>\n\nTotal: %d. Recent first.".formatted(docs.size()),
+        return new MenuScreen(MenuSection.NOTES, Messages.t("<b>📂 Open</b>\n\nTotal: %d. Recent first.").formatted(docs.size()),
                 InlineKeyboardMarkup.of(rows));
     }
 
@@ -136,7 +137,7 @@ public final class NotesScreens {
                             ? CallbackData.noteRemoveMode(doc.id(), page, ip - 1)
                             : CallbackData.noteOpen(doc.id(), page, ip - 1)).encode()));
                 }
-                pager.add(InlineKeyboardButton.of("%d / %d".formatted(ip + 1, pages), CallbackData.noop().encode()));
+                pager.add(InlineKeyboardButton.of(Messages.t("%d / %d").formatted(ip + 1, pages), CallbackData.noop().encode()));
                 if (ip < pages - 1) {
                     pager.add(InlineKeyboardButton.of("▶️", (removeMode
                             ? CallbackData.noteRemoveMode(doc.id(), page, ip + 1)
@@ -172,7 +173,7 @@ public final class NotesScreens {
 
     public static MenuScreen deleteConfirm(NoteDocument doc, int page) {
         return new MenuScreen(MenuSection.NOTES,
-                "Delete «%s»? The file will be removed but stays in git history.".formatted(TelegramApi.escapeHtml(doc.title())),
+                Messages.t("Delete «%s»? The file will be removed but stays in git history.").formatted(TelegramApi.escapeHtml(doc.title())),
                 InlineKeyboardMarkup.of(List.of(List.of(
                         InlineKeyboardButton.of("🗑 Yes", CallbackData.noteDelete(doc.id(), page, true).encode()),
                         InlineKeyboardButton.of("Cancel", CallbackData.noteOpen(doc.id(), page).encode())))));

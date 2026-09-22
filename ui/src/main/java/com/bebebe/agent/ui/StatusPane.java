@@ -1,5 +1,6 @@
 package com.bebebe.agent.ui;
 
+import com.bebebe.agent.i18n.Messages;
 import atlantafx.base.theme.Styles;
 import com.bebebe.agent.core.AgentState;
 import com.bebebe.agent.core.AgentSwitch;
@@ -42,14 +43,14 @@ public final class StatusPane extends ScrollPane {
     private final UiServices services;
     private final Label stateValue = new Label();
     private final Label stateHint = new Label();
-    private final Label lastError = new Label("—");
-    private final Label ollamaState = new Label("—");
-    private final Label ollamaSession = new Label("—");
-    private final Label ollamaTotal = new Label("—");
-    private final Label disk = new Label("—");
-    private final Label version = new Label("—");
-    private final Label updates = new Label("—");
-    private final Label watchdog = new Label("—");
+    private final Label lastError = new Label(Messages.t("—"));
+    private final Label ollamaState = new Label(Messages.t("—"));
+    private final Label ollamaSession = new Label(Messages.t("—"));
+    private final Label ollamaTotal = new Label(Messages.t("—"));
+    private final Label disk = new Label(Messages.t("—"));
+    private final Label version = new Label(Messages.t("—"));
+    private final Label updates = new Label(Messages.t("—"));
+    private final Label watchdog = new Label(Messages.t("—"));
     private final Label backupStatus = new Label();
     private final Timeline refresh = new Timeline(new KeyFrame(Duration.seconds(2), e -> refreshAll()));
     private final Consumer<AgentState> listener = state -> Platform.runLater(() -> render(state));
@@ -81,14 +82,14 @@ public final class StatusPane extends ScrollPane {
         row = add(grid, row, "Updates", updates);
         row = add(grid, row, "Watchdog", watchdog);
 
-        Button checkUpdates = new Button("Check for updates");
+        Button checkUpdates = new Button(Messages.t("Check for updates"));
         checkUpdates.setOnAction(e -> checkUpdatesNow());
         checkUpdates.setDisable(services == null || services.updates() == null);
-        Button backup = new Button("Export/backup...");
+        Button backup = new Button(Messages.t("Export/backup..."));
         backup.getStyleClass().add(Styles.ACCENT);
         backup.setOnAction(e -> backup());
         backup.setDisable(services == null || services.backup() == null);
-        Button quit = new Button("Quit the agent");
+        Button quit = new Button(Messages.t("Quit the agent"));
         quit.getStyleClass().add(Styles.DANGER);
         quit.setOnAction(e -> {
             javafx.scene.control.Alert confirm = new javafx.scene.control.Alert(
@@ -96,12 +97,12 @@ public final class StatusPane extends ScrollPane {
                     "Stop the whole process? Telegram, reminders and voice will stop working until the next launch. "
                             + "The window's close button, on the contrary, only hides the window.",
                     javafx.scene.control.ButtonType.OK, javafx.scene.control.ButtonType.CANCEL);
-            confirm.setHeaderText("Quit the agent");
+            confirm.setHeaderText(Messages.t("Quit the agent"));
             confirm.showAndWait().filter(b -> b == javafx.scene.control.ButtonType.OK)
                     .ifPresent(b -> MainWindow.quit());
         });
-        Label backupNote = new Label("The archive includes memory, personas, reminders, notes and the config. "
-                + "Secrets (Ollama key, bot token) are excluded from the config -- after restoring they must be entered again.");
+        Label backupNote = new Label(Messages.t("The archive includes memory, personas, reminders, notes and the config. "
+                + "Secrets (Ollama key, bot token) are excluded from the config -- after restoring they must be entered again."));
         backupNote.getStyleClass().add(Styles.TEXT_SUBTLE);
         backupNote.setWrapText(true);
         backupStatus.getStyleClass().add(Styles.TEXT_SUBTLE);
@@ -174,7 +175,7 @@ public final class StatusPane extends ScrollPane {
             updates.setText(services.updates().last().map(UpdateChecker.Status::describe)
                     .orElse("not checked yet (first check half a minute after start)"));
         } else {
-            updates.setText("disabled");
+            updates.setText(Messages.t("disabled"));
         }
         if (services.watchdogRestarts() != null) {
             int n = services.watchdogRestarts().getAsInt();
@@ -213,7 +214,7 @@ public final class StatusPane extends ScrollPane {
     }
 
     private void checkUpdatesNow() {
-        updates.setText("checking...");
+        updates.setText(Messages.t("checking..."));
         Thread t = new Thread(() -> {
             UpdateChecker.Status status = services.updates().check();
             Platform.runLater(() -> updates.setText(status.describe()));
@@ -224,12 +225,12 @@ public final class StatusPane extends ScrollPane {
 
     private void backup() {
         DirectoryChooser chooser = new DirectoryChooser();
-        chooser.setTitle("Where to save the archive");
+        chooser.setTitle(Messages.t("Where to save the archive"));
         File dir = chooser.showDialog(getScene() == null ? null : getScene().getWindow());
         if (dir == null) {
             return;
         }
-        backupStatus.setText("Building the archive...");
+        backupStatus.setText(Messages.t("Building the archive..."));
         Thread t = new Thread(() -> {
             String result;
             try {

@@ -128,6 +128,10 @@ public record CallbackData(String namespace, List<String> parts) {
         return of(NS_SETTINGS, "typing", enable ? "on" : "off");
     }
 
+    public static CallbackData language(String code) {
+        return of(NS_SETTINGS, "lang", code);
+    }
+
     public static CallbackData voiceInput(boolean enable) {
         return of(NS_SETTINGS, "vin", enable ? "on" : "off");
     }

@@ -21,7 +21,8 @@ public final class Dto {
             Chat chat,
             long date,
             String text,
-            Voice voice
+            Voice voice,
+            Document document
     ) {
         public boolean hasText() {
             return text != null && !text.isBlank();
@@ -29,6 +30,10 @@ public final class Dto {
 
         public boolean isVoice() {
             return voice != null;
+        }
+
+        public boolean hasDocument() {
+            return document != null;
         }
 
         public String command() {
@@ -57,6 +62,18 @@ public final class Dto {
     public record Voice(String fileId, int duration, String mimeType) {
     }
 
+    /** An attached file. A .txt here can stand in for a long text answer -- see PendingInputs. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Document(String fileId, String fileName, String mimeType, Long fileSize) {
+
+        /** Plain text by extension or by MIME: those we are willing to read as an answer. */
+        public boolean isPlainText() {
+            String name = fileName == null ? "" : fileName.toLowerCase(java.util.Locale.ROOT);
+            String mime = mimeType == null ? "" : mimeType.toLowerCase(java.util.Locale.ROOT);
+            return name.endsWith(".txt") || name.endsWith(".md") || mime.startsWith("text/");
+        }
+    }
+
     /** Answer of getFile: {@code filePath} is relative to the file root, not to the API root. */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record File(String fileId, String filePath, Long fileSize) {
@@ -69,8 +86,13 @@ public final class Dto {
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record InlineKeyboardButton(String text, String callbackData) {
 
+        /**
+         * Every button label in the menu is built here, so this is the one place that has to
+         * translate one. A label that is user data (a persona name, a note title) simply is
+         * not in the catalogue and comes back unchanged.
+         */
         public static InlineKeyboardButton of(String text, String callbackData) {
-            return new InlineKeyboardButton(text, callbackData);
+            return new InlineKeyboardButton(com.bebebe.agent.i18n.Messages.t(text), callbackData);
         }
     }
 

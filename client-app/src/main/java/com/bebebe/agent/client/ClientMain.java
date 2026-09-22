@@ -32,6 +32,8 @@ public final class ClientMain {
             return;
         }
         AppLogging.applyConfig(config.logDir(), config.logLevel(), Map.of());
+
+        com.bebebe.agent.i18n.Messages.setLanguage(config.language());
         log.info("Client config: {}", config);
 
         ClientRuntime runtime = ClientRuntime.start(config, null, true, () -> System.exit(0));

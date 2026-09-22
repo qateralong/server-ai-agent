@@ -1,5 +1,6 @@
 package com.bebebe.agent.telegram.menu;
 
+import com.bebebe.agent.i18n.Messages;
 import com.bebebe.agent.script.library.ScriptEntry;
 import com.bebebe.agent.telegram.api.Dto.InlineKeyboardButton;
 import com.bebebe.agent.telegram.api.Dto.InlineKeyboardMarkup;
@@ -20,13 +21,13 @@ public final class ConfirmScreens {
                 ? "\n\n<i>This is a new version -- the code changed, so I am asking again.</i>"
                 : "";
 
-        String text = """
+        String text = Messages.t("""
                 ⚠️ <b>Run the script?</b>
 
                 <b>%s</b>
                 %s
 
-                <i>%s</i>%s""".formatted(
+                <i>%s</i>%s""").formatted(
                 TelegramApi.escapeHtml(script.displayName()),
                 TelegramApi.escapeHtml(description),
                 statistics(script),
@@ -41,7 +42,7 @@ public final class ConfirmScreens {
     }
 
     public static MenuScreen trustOffer(ScriptEntry script) {
-        String text = "Run «%s» without asking next time?"
+        String text = Messages.t("Run «%s» without asking next time?")
                 .formatted(TelegramApi.escapeHtml(script.displayName()));
 
         return MenuScreen.of(text, InlineKeyboardMarkup.of(List.of(List.of(
@@ -51,13 +52,13 @@ public final class ConfirmScreens {
 
     public static MenuScreen list(List<ScriptEntry> all, int page) {
         if (all.isEmpty()) {
-            return new MenuScreen(MenuSection.CONFIRMATIONS, """
+            return new MenuScreen(MenuSection.CONFIRMATIONS, Messages.t("""
                     <b>%s</b>
 
                     The catalog is empty. Scripts will appear here after the agent \
                     performs its first action.
 
-                    New scripts ask for confirmation by default."""
+                    New scripts ask for confirmation by default.""")
                     .formatted(MenuSection.CONFIRMATIONS.title()),
                     InlineKeyboardMarkup.of(List.of(navigationRow())));
         }
@@ -81,7 +82,7 @@ public final class ConfirmScreens {
                         CallbackData.confirmList(current - 1).encode()));
             }
             pager.add(InlineKeyboardButton.of(
-                    "%d / %d".formatted(current + 1, pages), CallbackData.noop().encode()));
+                    Messages.t("%d / %d").formatted(current + 1, pages), CallbackData.noop().encode()));
             if (current < pages - 1) {
                 pager.add(InlineKeyboardButton.of("▶️",
                         CallbackData.confirmList(current + 1).encode()));
@@ -90,13 +91,13 @@ public final class ConfirmScreens {
         }
         rows.add(navigationRow());
 
-        String text = """
+        String text = Messages.t("""
                 <b>%s</b>
 
                 🔔 -- ask before running
                 🔕 -- run immediately
 
-                Tap to toggle. Total scripts: %d."""
+                Tap to toggle. Total scripts: %d.""")
                 .formatted(MenuSection.CONFIRMATIONS.title(), all.size());
 
         return new MenuScreen(MenuSection.CONFIRMATIONS, text, InlineKeyboardMarkup.of(rows));
@@ -106,7 +107,7 @@ public final class ConfirmScreens {
         if (script.totalRuns() == 0) {
             return "Running for the first time.";
         }
-        return "Ran %d times before, %d successfully."
+        return Messages.t("Ran %d times before, %d successfully.")
                 .formatted(script.totalRuns(), script.successCount());
     }
 

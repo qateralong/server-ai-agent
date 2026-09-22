@@ -3,6 +3,9 @@ package com.bebebe.agent.config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.bebebe.agent.i18n.Language;
+import com.bebebe.agent.i18n.Messages;
+
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -30,6 +33,7 @@ public final class AppSettings {
     private boolean liveReplies;
     private boolean typingIndicator;
     private boolean voiceInput;
+    private Language language;
     private boolean scriptsEnabled;
 
     public static final class ProviderSlot {
@@ -64,6 +68,7 @@ public final class AppSettings {
                         boolean liveReplies,
                         boolean typingIndicator,
                         boolean voiceInput,
+                        Language language,
                         boolean scriptsEnabled) {
         this.file = file;
         this.provider = normalizeProvider(provider);
@@ -77,6 +82,9 @@ public final class AppSettings {
         this.liveReplies = liveReplies;
         this.typingIndicator = typingIndicator;
         this.voiceInput = voiceInput;
+        this.language = language;
+
+        Messages.setLanguage(language);
         this.scriptsEnabled = scriptsEnabled;
     }
 
@@ -113,6 +121,7 @@ public final class AppSettings {
                 config.section("agent").bool("live_replies", false),
                 config.section("telegram").bool("typing_indicator", true),
                 config.section("telegram").bool("voice_input", true),
+                Language.from(config.section("agent").string("language", "auto")),
                 config.section("agent").bool("scripts_enabled", true));
     }
 
@@ -330,6 +339,25 @@ public final class AppSettings {
         fire(SettingsField.VOICE_INPUT);
     }
 
+    public Language language() {
+        synchronized (lock) {
+            return language;
+        }
+    }
+
+    public void setLanguage(Language value) {
+        Language target = value == null ? Language.EN : value;
+        synchronized (lock) {
+            if (language == target) {
+                return;
+            }
+            language = target;
+        }
+
+        Messages.setLanguage(target);
+        fire(SettingsField.LANGUAGE);
+    }
+
     public boolean scriptsEnabled() {
         synchronized (lock) {
             return scriptsEnabled;
@@ -363,6 +391,7 @@ public final class AppSettings {
             values.put(SettingsField.LIVE_REPLIES.path(), liveReplies);
             values.put(SettingsField.TYPING_INDICATOR.path(), typingIndicator);
             values.put(SettingsField.VOICE_INPUT.path(), voiceInput);
+            values.put(SettingsField.LANGUAGE.path(), language.code());
             values.put(SettingsField.SCRIPTS_ENABLED.path(), scriptsEnabled);
         }
         ConfigFileWriter.update(file, values);
@@ -408,6 +437,7 @@ public final class AppSettings {
             case LIVE_REPLIES -> liveReplies();
             case TYPING_INDICATOR -> typingIndicator();
             case VOICE_INPUT -> voiceInput();
+            case LANGUAGE -> language().code();
             case SCRIPTS_ENABLED -> scriptsEnabled();
         };
     }

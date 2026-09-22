@@ -1,5 +1,6 @@
 package com.bebebe.agent.telegram.menu;
 
+import com.bebebe.agent.i18n.Messages;
 import com.bebebe.agent.core.AgentState;
 import com.bebebe.agent.telegram.api.Dto.InlineKeyboardButton;
 import com.bebebe.agent.telegram.api.Dto.InlineKeyboardMarkup;
@@ -34,11 +35,11 @@ public final class MenuRenderer {
         }
         rows.add(List.of(InlineKeyboardButton.of("✖️ Close", CallbackData.close().encode())));
 
-        String text = """
+        String text = Messages.t("""
                 <b>Server AI Agent</b>
                 State: %s
 
-                Choose a section:""".formatted(badge(state));
+                Choose a section:""").formatted(badge(state));
 
         return MenuScreen.of(text, InlineKeyboardMarkup.of(rows));
     }
@@ -54,7 +55,7 @@ public final class MenuRenderer {
                 on ? "🔴 Switch off" : "🟢 Switch on",
                 CallbackData.power(!on).encode());
 
-        String text = """
+        String text = Messages.t("""
                 <b>%s</b>
 
                 State: %s
@@ -62,7 +63,7 @@ public final class MenuRenderer {
                 %s
 
                 The same flag is toggled by the button in the application window -- \
-                it is one state, not two independent settings.""".formatted(
+                it is one state, not two independent settings.""").formatted(
                 MenuSection.POWER.title(),
                 badge(state),
                 on
@@ -76,12 +77,12 @@ public final class MenuRenderer {
     }
 
     public static MenuScreen stub(MenuSection section) {
-        String text = """
+        String text = Messages.t("""
                 <b>%s</b>
 
                 %s
 
-                <i>This section is not implemented yet.</i>""".formatted(section.title(), section.description());
+                <i>This section is not implemented yet.</i>""").formatted(section.title(), section.description());
 
         return new MenuScreen(section, text, InlineKeyboardMarkup.of(List.of(navigationRow())));
     }

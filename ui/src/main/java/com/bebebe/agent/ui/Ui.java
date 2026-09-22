@@ -1,6 +1,7 @@
 package com.bebebe.agent.ui;
 
 import atlantafx.base.theme.Styles;
+import com.bebebe.agent.i18n.Messages;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.Label;
@@ -8,6 +9,10 @@ import javafx.scene.control.Separator;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
+/**
+ * The building blocks every screen is made of -- and, because every screen is made of them,
+ * the place where interface text gets translated.
+ */
 final class Ui {
 
     static final double PAGE_PADDING = 24;
@@ -26,7 +31,7 @@ final class Ui {
     }
 
     static VBox header(String title, String subtitle) {
-        Label t = new Label(title);
+        Label t = new Label(Messages.t(title));
         t.getStyleClass().add(Styles.TITLE_2);
         VBox box = new VBox(4, t);
         if (subtitle != null && !subtitle.isBlank()) {
@@ -37,20 +42,20 @@ final class Ui {
     }
 
     static Label section(String text) {
-        Label l = new Label(text);
+        Label l = new Label(Messages.t(text));
         l.getStyleClass().addAll(Styles.TITLE_4);
         VBox.setMargin(l, new Insets(8, 0, 0, 0));
         return l;
     }
 
     static Label caption(String text) {
-        Label l = new Label(text);
+        Label l = new Label(Messages.t(text));
         l.getStyleClass().add(Styles.TEXT_MUTED);
         return l;
     }
 
     static Label hint(String text) {
-        Label l = new Label(text);
+        Label l = new Label(Messages.t(text));
         l.getStyleClass().add(Styles.TEXT_SUBTLE);
         l.setWrapText(true);
         l.setMaxWidth(READABLE_WIDTH);

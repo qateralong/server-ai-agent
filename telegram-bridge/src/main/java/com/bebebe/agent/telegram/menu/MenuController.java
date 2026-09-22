@@ -243,6 +243,7 @@ public final class MenuController {
             case "hints" -> hints(data);
             case "voice" -> voiceReplies(data);
             case "vin" -> voiceInput(data);
+            case "lang" -> language(data);
             case "live" -> liveReplies(data);
             case "typing" -> typingIndicator(data);
             case "scripts" -> scriptsEnabled(data);
@@ -398,6 +399,17 @@ public final class MenuController {
         settings.setScriptsEnabled(enable);
         return MenuResponse.show(SettingsScreens.root(settings),
                 persist(enable ? "Scripts on" : "Scripts off"));
+    }
+
+    private MenuResponse language(CallbackData data) {
+        Optional<String> code = data.arg(1);
+        if (code.isEmpty()) {
+            return MenuResponse.toast("Unknown button");
+        }
+        com.bebebe.agent.i18n.Language target = com.bebebe.agent.i18n.Language.from(code.get());
+        settings.setLanguage(target);
+
+        return MenuResponse.show(SettingsScreens.root(settings), persist("Language: " + target.title()));
     }
 
     private MenuResponse voiceInput(CallbackData data) {

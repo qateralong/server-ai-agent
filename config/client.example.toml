@@ -12,6 +12,9 @@ token = ""
 name = "laptop"                # how this computer is named in the server status
 tray = true                    # system tray icon (needs AppIndicator on GNOME)
 
+# Language of the tray tooltip and its menu: "auto", "en" or "ru".
+language = "auto"
+
 [hotkey]
 # Push-to-talk: the same evdev helper as the standalone build (native/evdev-hotkey).
 # No helper or no access to /dev/input -- the client works without voice.

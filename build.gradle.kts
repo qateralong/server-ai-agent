@@ -45,6 +45,11 @@ subprojects {
 
     tasks.withType<Test>().configureEach {
         useJUnitPlatform()
+
+        // The interface language follows the system locale by default, and the tests assert
+        // English wording -- so they must not depend on the locale of the machine they run on.
+        systemProperty("user.language", "en")
+        systemProperty("user.country", "US")
         testLogging {
             events("passed", "skipped", "failed")
         }

@@ -1,5 +1,6 @@
 package com.bebebe.agent.client;
 
+import com.bebebe.agent.i18n.Messages;
 import com.bebebe.agent.transport.TransportClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,10 +35,10 @@ final class ClientTray implements AutoCloseable {
         }
         try {
             PopupMenu menu = new PopupMenu();
-            MenuItem exit = new MenuItem("Quit");
+            MenuItem exit = new MenuItem(Messages.t("Quit"));
             exit.addActionListener(e -> onExit.run());
             menu.add(exit);
-            TrayIcon trayIcon = new TrayIcon(dot(Color.GRAY), "Server AI Agent client: connecting...", menu);
+            TrayIcon trayIcon = new TrayIcon(dot(Color.GRAY), Messages.t("Server AI Agent client: connecting..."), menu);
             trayIcon.setImageAutoSize(true);
             SystemTray.getSystemTray().add(trayIcon);
             log.info("Tray icon installed");
@@ -62,12 +63,12 @@ final class ClientTray implements AutoCloseable {
 
     static String describe(TransportClient.State state) {
         return switch (state) {
-            case CONNECTED -> "connected";
-            case CONNECTING, AUTHENTICATING -> "connecting...";
-            case RECONNECTING -> "no connection, reconnecting...";
-            case REJECTED -> "rejected by the server -- a new pairing is needed";
-            case STOPPED -> "stopped";
-            case NEW -> "starting";
+            case CONNECTED -> Messages.t("connected");
+            case CONNECTING, AUTHENTICATING -> Messages.t("connecting...");
+            case RECONNECTING -> Messages.t("no connection, reconnecting...");
+            case REJECTED -> Messages.t("rejected by the server -- a new pairing is needed");
+            case STOPPED -> Messages.t("stopped");
+            case NEW -> Messages.t("starting");
         };
     }
 

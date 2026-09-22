@@ -1,5 +1,6 @@
 package com.bebebe.agent.telegram.menu;
 
+import com.bebebe.agent.i18n.Messages;
 import com.bebebe.agent.memory.Entity;
 import com.bebebe.agent.memory.Fact;
 import com.bebebe.agent.memory.MemoryStore;
@@ -20,7 +21,7 @@ public final class MemoryScreens {
     }
 
     public static MenuScreen root(MemoryStore memory) {
-        String text = """
+        String text = Messages.t("""
                 <b>%s</b>
 
                 👥 People: %d
@@ -28,7 +29,7 @@ public final class MemoryScreens {
                 💬 Messages in session logs: %d
 
                 <i>People and facts are extracted from the conversation automatically, \
-                every few messages and when the agent is switched off.</i>""".formatted(
+                every few messages and when the agent is switched off.</i>""").formatted(
                 MenuSection.MEMORY.title(),
                 memory.countEntities(), memory.countFacts(), memory.countMessages());
 
@@ -40,10 +41,10 @@ public final class MemoryScreens {
 
     public static MenuScreen people(List<Entity> all, int page) {
         if (all.isEmpty()) {
-            return new MenuScreen(MenuSection.MEMORY, """
+            return new MenuScreen(MenuSection.MEMORY, Messages.t("""
                     <b>👥 People</b>
 
-                    No one yet. The agent will remember people once you mention them in conversation.""",
+                    No one yet. The agent will remember people once you mention them in conversation."""),
                     InlineKeyboardMarkup.of(List.of(backRow(CallbackData.section(MenuSection.MEMORY)))));
         }
 
@@ -63,7 +64,7 @@ public final class MemoryScreens {
         rows.add(backRow(CallbackData.section(MenuSection.MEMORY)));
 
         return new MenuScreen(MenuSection.MEMORY,
-                "<b>👥 People</b>\n\nTotal: %d. Tap to open a card.".formatted(all.size()),
+                Messages.t("<b>👥 People</b>\n\nTotal: %d. Tap to open a card.").formatted(all.size()),
                 InlineKeyboardMarkup.of(rows));
     }
 
@@ -114,10 +115,10 @@ public final class MemoryScreens {
     }
 
     public static MenuScreen personDeleteConfirm(Entity entity, int factCount) {
-        String text = """
+        String text = Messages.t("""
                 Delete <b>%s</b> and %d fact(s) about them only?
 
-                Facts that also mention other people will stay with them.""".formatted(
+                Facts that also mention other people will stay with them.""").formatted(
                 TelegramApi.escapeHtml(entity.canonicalName()), factCount);
 
         return new MenuScreen(MenuSection.MEMORY, text, InlineKeyboardMarkup.of(List.of(
@@ -150,19 +151,19 @@ public final class MemoryScreens {
 
     public static MenuScreen forgetConfirm(String what, String description) {
         return new MenuScreen(MenuSection.MEMORY,
-                "Really forget <b>%s</b>? This cannot be undone.".formatted(TelegramApi.escapeHtml(description)),
+                Messages.t("Really forget <b>%s</b>? This cannot be undone.").formatted(TelegramApi.escapeHtml(description)),
                 InlineKeyboardMarkup.of(List.of(List.of(
                         InlineKeyboardButton.of("🗑 Yes", CallbackData.memoryForget(what, true).encode()),
                         InlineKeyboardButton.of("Cancel", CallbackData.memoryForget().encode())))));
     }
 
     public static MenuScreen entityQuestion(String token, String mention, Entity candidate, int heldFacts) {
-        String text = """
+        String text = Messages.t("""
                 🧠 <b>Memory clarification</b>
 
                 The conversation mentions <b>%s</b>. Is this %s%s or a different person?
 
-                <i>%s</i>""".formatted(
+                <i>%s</i>""").formatted(
                 TelegramApi.escapeHtml(mention),
                 TelegramApi.escapeHtml(candidate.canonicalName()),
                 candidate.relation().isEmpty() ? "" : " (" + TelegramApi.escapeHtml(candidate.relation()) + ")",
@@ -179,7 +180,7 @@ public final class MemoryScreens {
         if (current > 0) {
             row.add(InlineKeyboardButton.of("◀️", target.apply(current - 1).encode()));
         }
-        row.add(InlineKeyboardButton.of("%d / %d".formatted(current + 1, pages), CallbackData.noop().encode()));
+        row.add(InlineKeyboardButton.of(Messages.t("%d / %d").formatted(current + 1, pages), CallbackData.noop().encode()));
         if (current < pages - 1) {
             row.add(InlineKeyboardButton.of("▶️", target.apply(current + 1).encode()));
         }

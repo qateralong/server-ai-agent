@@ -1,5 +1,7 @@
 package com.bebebe.agent.telegram.menu;
 
+import com.bebebe.agent.i18n.Messages;
+
 import java.util.Optional;
 
 public enum MenuSection {
@@ -46,11 +48,11 @@ public enum MenuSection {
     }
 
     public String title() {
-        return title;
+        return Messages.t(title);
     }
 
     public String description() {
-        return description;
+        return Messages.t(description);
     }
 
     public boolean isImplemented() {

@@ -104,6 +104,15 @@ class TelegramBridgeTest {
                 .formatted(updateIds.getAndIncrement(), updateIds.get(), username, CHAT));
     }
 
+    private void sendDocument(String fileName, String mimeType, String username) {
+        stub.enqueue("""
+                {"update_id":%d,"message":{"message_id":%d,"date":0,
+                 "from":{"id":777,"is_bot":false,"first_name":"Иван","username":"%s"},
+                 "chat":{"id":%d,"type":"private"},
+                 "document":{"file_id":"doc-1","file_name":"%s","mime_type":"%s","file_size":37}}}"""
+                .formatted(updateIds.getAndIncrement(), updateIds.get(), username, CHAT, fileName, mimeType));
+    }
+
     private void pressButton(String callbackData, String username) {
         stub.enqueue("""
                 {"update_id":%d,"callback_query":{"id":"cb-%d",
@@ -162,6 +171,43 @@ class TelegramBridgeTest {
 
         assertTrue(stub.awaitCalls("sendMessage", 1, WAIT));
         assertTrue(textOf(stub.calls("sendMessage").getFirst()).contains("is off"));
+    }
+
+    @Test
+    void txtFileAnswersTheInputTheBotIsWaitingFor() {
+        agentSwitch.turnOn();
+        startBridge();
+        stub.serveDocument = true;
+        List<String> accepted = new CopyOnWriteArrayList<>();
+        bridge.pendingInputs().await(CHAT, com.bebebe.agent.telegram.input.PendingInput.of(
+                "persona.prompt.1", "Send the instruction", 900,
+                value -> {
+                    accepted.add(value);
+                    return com.bebebe.agent.telegram.input.InputOutcome.accepted("Instruction saved", null);
+                }));
+
+        sendDocument("persona.txt", "text/plain", ALLOWED);
+
+        assertTrue(stub.awaitCalls("downloadFile", 1, WAIT), "the file was not downloaded");
+        assertEquals(List.of(new String(TelegramStubServer.DOCUMENT_BYTES).strip()), accepted);
+        assertEquals(0, bridge.pendingInputs().size(), "the wait must be over");
+        assertTrue(agentCalls.isEmpty(), "an answer to a pending input is not a question for the model");
+    }
+
+    @Test
+    void nonTextAttachmentIsRefusedAndTheBotKeepsWaiting() {
+        agentSwitch.turnOn();
+        startBridge();
+        bridge.pendingInputs().await(CHAT, com.bebebe.agent.telegram.input.PendingInput.of(
+                "persona.prompt.1", "Send the instruction", 900,
+                value -> com.bebebe.agent.telegram.input.InputOutcome.accepted("saved", null)));
+
+        sendDocument("photo.png", "image/png", ALLOWED);
+
+        assertTrue(stub.awaitCalls("sendMessage", 1, WAIT));
+        assertTrue(textOf(stub.calls("sendMessage").getFirst()).contains("plain text file"));
+        assertTrue(stub.calls("getFile").isEmpty(), "a refused attachment must not be downloaded");
+        assertEquals(1, bridge.pendingInputs().size(), "the bot still waits for the answer");
     }
 
     @Test

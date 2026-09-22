@@ -1,5 +1,6 @@
 package com.bebebe.agent.ui;
 
+import com.bebebe.agent.i18n.Messages;
 import atlantafx.base.theme.Styles;
 import com.bebebe.agent.llm.LlmProvider;
 import com.bebebe.agent.llm.LlmRequest;
@@ -38,10 +39,10 @@ public final class AgentTestPane extends VBox {
 
     private final TextArea promptArea = new TextArea(DEFAULT_PROMPT);
     private final TextArea responseArea = new TextArea();
-    private final Label statusLabel = new Label("Ready for a request");
+    private final Label statusLabel = new Label(Messages.t("Ready for a request"));
     private final ProgressIndicator spinner = new ProgressIndicator();
-    private final Button sendButton = new Button("Send");
-    private final Button pingButton = new Button("Check connection");
+    private final Button sendButton = new Button(Messages.t("Send"));
+    private final Button pingButton = new Button(Messages.t("Check connection"));
 
     public AgentTestPane() {
         VBox header = Ui.header(TITLE, "A direct request to the model bypassing the agent loop: check the connection, "
@@ -52,7 +53,7 @@ public final class AgentTestPane extends VBox {
 
         responseArea.setWrapText(true);
         responseArea.setEditable(false);
-        responseArea.setPromptText("The model reply will appear here");
+        responseArea.setPromptText(Messages.t("The model reply will appear here"));
         VBox.setVgrow(responseArea, Priority.ALWAYS);
 
         sendButton.getStyleClass().add(Styles.ACCENT);
@@ -72,7 +73,7 @@ public final class AgentTestPane extends VBox {
                 Ui.caption("Prompt"),
                 promptArea,
                 controls,
-                new Label("Reply:"),
+                new Label(Messages.t("Reply:")),
                 responseArea);
     }
 

@@ -1,5 +1,6 @@
 package com.bebebe.agent.ui;
 
+import com.bebebe.agent.i18n.Messages;
 import atlantafx.base.theme.Styles;
 import com.bebebe.agent.memory.Persona;
 import com.bebebe.agent.memory.PersonaStore;
@@ -32,8 +33,8 @@ public final class PersonasPane extends BorderPane {
     private final TextField name = new TextField();
     private final TextArea prompt = new TextArea();
     private final Label status = new Label();
-    private final Button activate = new Button("Make active");
-    private final Button delete = new Button("Delete");
+    private final Button activate = new Button(Messages.t("Make active"));
+    private final Button delete = new Button(Messages.t("Delete"));
     private final Runnable listener = () -> Platform.runLater(this::reload);
 
     private Long editingId;
@@ -54,26 +55,26 @@ public final class PersonasPane extends BorderPane {
         list.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) -> select(selected));
         list.setPrefWidth(220);
 
-        name.setPromptText("Persona name");
-        prompt.setPromptText("System prompt text: who the agent is and how it answers");
+        name.setPromptText(Messages.t("Persona name"));
+        prompt.setPromptText(Messages.t("System prompt text: who the agent is and how it answers"));
         prompt.setWrapText(true);
         VBox.setVgrow(prompt, Priority.ALWAYS);
 
-        Button save = new Button("Save");
+        Button save = new Button(Messages.t("Save"));
         save.getStyleClass().add(Styles.ACCENT);
         save.setOnAction(e -> save());
-        Button create = new Button("New");
+        Button create = new Button(Messages.t("New"));
         create.setOnAction(e -> startNew());
         activate.setOnAction(e -> ifSelected(id -> {
             store.activate(id);
-            status.setText("Active: " + name.getText());
+            status.setText(Messages.t("Active: ") + name.getText());
         }));
         delete.getStyleClass().add(Styles.DANGER);
         delete.setOnAction(e -> ifSelected(id -> {
             try {
                 store.delete(id);
                 startNew();
-                status.setText("Deleted");
+                status.setText(Messages.t("Deleted"));
             } catch (IllegalStateException ex) {
                 status.setText(ex.getMessage());
             }
@@ -123,7 +124,7 @@ public final class PersonasPane extends BorderPane {
         name.clear();
         prompt.clear();
         activate.setDisable(true);
-        status.setText("New persona: fill in the name and text, press \"Save\"");
+        status.setText(Messages.t("New persona: fill in the name and text, press \"Save\""));
     }
 
     private void save() {
@@ -133,18 +134,18 @@ public final class PersonasPane extends BorderPane {
                     : store.update(editingId, name.getText(), prompt.getText());
             editingId = saved.id();
             reload();
-            status.setText("Saved: " + saved.name());
+            status.setText(Messages.t("Saved: ") + saved.name());
         } catch (IllegalArgumentException e) {
             status.setText(e.getMessage());
         } catch (RuntimeException e) {
             log.error("Cannot save persona", e);
-            status.setText("Error: " + e.getMessage());
+            status.setText(Messages.t("Error: ") + e.getMessage());
         }
     }
 
     private void ifSelected(java.util.function.LongConsumer action) {
         if (editingId == null) {
-            status.setText("Select a persona in the list first");
+            status.setText(Messages.t("Select a persona in the list first"));
             return;
         }
         action.accept(editingId);

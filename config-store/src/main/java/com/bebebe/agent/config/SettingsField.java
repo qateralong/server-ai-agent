@@ -1,5 +1,7 @@
 package com.bebebe.agent.config;
 
+import com.bebebe.agent.i18n.Messages;
+
 public enum SettingsField {
 
     LLM_PROVIDER("llm", "provider", Apply.LIVE,
@@ -35,6 +37,9 @@ public enum SettingsField {
     VOICE_INPUT("telegram", "voice_input", Apply.LIVE,
             "Accept voice messages", false),
 
+    LANGUAGE("agent", "language", Apply.RESTART,
+            "Interface language", false),
+
     SCRIPTS_ENABLED("agent", "scripts_enabled", Apply.LIVE,
             "Scripts (actions on the computer)", false);
 
@@ -42,7 +47,10 @@ public enum SettingsField {
 
         LIVE,
 
-        RECONNECT
+        RECONNECT,
+
+        /** Applies to the chat at once, but the window keeps its old labels until restarted. */
+        RESTART
     }
 
     private final String section;
@@ -76,7 +84,7 @@ public enum SettingsField {
     }
 
     public String title() {
-        return title;
+        return Messages.t(title);
     }
 
     public boolean isSecret() {
@@ -84,8 +92,10 @@ public enum SettingsField {
     }
 
     public String warning() {
-        return apply == Apply.RECONNECT
-                ? "Changing the token drops the current Telegram session: the bridge will reconnect."
-                : "";
+        return Messages.t(switch (apply) {
+            case RECONNECT -> "Changing the token drops the current Telegram session: the bridge will reconnect.";
+            case RESTART -> "The chat switches at once; the window picks up the new language after a restart.";
+            case LIVE -> "";
+        });
     }
 }

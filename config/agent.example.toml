@@ -80,6 +80,12 @@ persona = "default"
 # (length, tone, pauses) is set by the active persona's instruction.
 live_replies = false
 
+# Language of the interface: the window, the Telegram menu and the bot's own
+# replies. "auto" follows the system locale; "en" and "ru" pin it. Log files stay
+# English either way. The chat switches at once, the window after a restart.
+# Edited in the window and in ⚙️ Settings in Telegram.
+language = "auto"
+
 # Whether scripts are allowed. false -- the model does not see the script decision
 # types at all: it answers itself or with tools, nothing runs on the computer.
 # Edited in the window and in ⚙️ Settings in Telegram.

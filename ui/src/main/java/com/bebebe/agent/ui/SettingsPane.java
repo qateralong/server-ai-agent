@@ -1,5 +1,6 @@
 package com.bebebe.agent.ui;
 
+import com.bebebe.agent.i18n.Messages;
 import atlantafx.base.controls.ToggleSwitch;
 import atlantafx.base.theme.Styles;
 import com.bebebe.agent.config.AppSettings;
@@ -48,15 +49,15 @@ public final class SettingsPane extends ScrollPane {
     private final TextField endpoint = new TextField();
 
     private final PasswordField botToken = new PasswordField();
-    private final CheckBox showBotToken = new CheckBox("show");
+    private final CheckBox showBotToken = new CheckBox(Messages.t("show"));
     private final TextField botTokenVisible = new TextField();
 
     private final PasswordField apiKey = new PasswordField();
-    private final CheckBox showApiKey = new CheckBox("show");
+    private final CheckBox showApiKey = new CheckBox(Messages.t("show"));
     private final TextField apiKeyVisible = new TextField();
 
     private final ComboBox<String> model = new ComboBox<>();
-    private final Button loadModels = new Button("Load list");
+    private final Button loadModels = new Button(Messages.t("Load list"));
 
     private final TextField usernames = new TextField();
     private final ToggleSwitch proactiveHints = new ToggleSwitch();
@@ -64,11 +65,12 @@ public final class SettingsPane extends ScrollPane {
     private final ToggleSwitch liveReplies = new ToggleSwitch();
     private final ToggleSwitch typingIndicator = new ToggleSwitch();
     private final ToggleSwitch voiceInput = new ToggleSwitch();
+    private final ComboBox<com.bebebe.agent.i18n.Language> language = new ComboBox<>();
     private final ToggleSwitch scriptsEnabled = new ToggleSwitch();
 
     private final Label status = new Label();
-    private final Button save = new Button("Save");
-    private final Button reset = new Button("Discard changes");
+    private final Button save = new Button(Messages.t("Save"));
+    private final Button reset = new Button(Messages.t("Discard changes"));
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "settings-io");
@@ -102,15 +104,15 @@ public final class SettingsPane extends ScrollPane {
     }
 
     private Region secretsBlock() {
-        Label caption = new Label("Secrets -- only here");
+        Label caption = new Label(Messages.t("Secrets -- only here"));
         caption.getStyleClass().add(Styles.TEXT_BOLD);
 
-        Label note = new Label("The Telegram menu has no such fields: messages stay "
-                + "in the chat history and on Telegram servers.");
+        Label note = new Label(Messages.t("The Telegram menu has no such fields: messages stay "
+                + "in the chat history and on Telegram servers."));
         note.getStyleClass().add(Styles.TEXT_SUBTLE);
         note.setWrapText(true);
 
-        Label warning = new Label("⚠️  " + SettingsField.TELEGRAM_BOT_TOKEN.warning());
+        Label warning = new Label(Messages.t("⚠️  ") + SettingsField.TELEGRAM_BOT_TOKEN.warning());
         warning.getStyleClass().addAll(Styles.WARNING, Styles.TEXT_BOLD);
         warning.setWrapText(true);
 
@@ -126,11 +128,11 @@ public final class SettingsPane extends ScrollPane {
     }
 
     private Region providerBlock() {
-        Label caption = new Label("Model");
+        Label caption = new Label(Messages.t("Model"));
         caption.getStyleClass().add(Styles.TEXT_BOLD);
-        Label note = new Label("The provider is global for the whole agent. Each provider has its own key, model "
+        Label note = new Label(Messages.t("The provider is global for the whole agent. Each provider has its own key, model "
                 + "and endpoint -- switching does not lose the others. A request already in progress finishes "
-                + "on the old provider; the next one goes to the selected one.");
+                + "on the old provider; the next one goes to the selected one."));
         note.getStyleClass().add(Styles.TEXT_SUBTLE);
         note.setWrapText(true);
 
@@ -154,10 +156,10 @@ public final class SettingsPane extends ScrollPane {
         HBox modelRow = new HBox(8, model, loadModels);
         modelRow.setAlignment(Pos.CENTER_LEFT);
 
-        endpoint.setPromptText("empty -- the provider's default address");
-        Label endpointHint = new Label("Defaults: Ollama -- https://ollama.com (local daemon -- http://localhost:11434), "
+        endpoint.setPromptText(Messages.t("empty -- the provider's default address"));
+        Label endpointHint = new Label(Messages.t("Defaults: Ollama -- https://ollama.com (local daemon -- http://localhost:11434), "
                 + "Claude -- https://api.anthropic.com. Fill in for a proxy or a compatible self-hosted endpoint. "
-                + "Changing it recreates the provider client.");
+                + "Changing it recreates the provider client."));
         endpointHint.getStyleClass().add(Styles.TEXT_SUBTLE);
         endpointHint.setWrapText(true);
         javafx.scene.control.TitledPane advanced = new javafx.scene.control.TitledPane("Advanced",
@@ -189,7 +191,7 @@ public final class SettingsPane extends ScrollPane {
         model.getItems().clear();
         model.setValue(slot[1].isEmpty() ? LlmProviders.defaultModel(next) : slot[1]);
         endpoint.setText(slot[2]);
-        endpoint.setPromptText("empty -- " + LlmProviders.defaultEndpoint(next));
+        endpoint.setPromptText(Messages.t("empty -- ") + LlmProviders.defaultEndpoint(next));
     }
 
     private Region secretRow(PasswordField masked, TextField visible, CheckBox toggle) {
@@ -209,39 +211,54 @@ public final class SettingsPane extends ScrollPane {
     }
 
     private Region liveBlock() {
-        Label caption = new Label("Applies immediately");
+        Label caption = new Label(Messages.t("Applies immediately"));
         caption.getStyleClass().add(Styles.TEXT_BOLD);
 
-        usernames.setPromptText("QaterAlong, second_user");
-        Label usernamesHint = new Label("Comma-separated. An empty list -- the bot answers no one.");
+        usernames.setPromptText(Messages.t("QaterAlong, second_user"));
+        Label usernamesHint = new Label(Messages.t("Comma-separated. An empty list -- the bot answers no one."));
         usernamesHint.getStyleClass().add(Styles.TEXT_SUBTLE);
 
-        proactiveHints.setText("The agent offers hints on its own");
-        voiceReplies.setText("Voice the replies (Piper) and send them to Telegram as voice messages");
-        liveReplies.setText("Several short messages instead of one long one");
-        Label liveHint = new Label("Enables the mechanism; how exactly to split (length, tone, pauses) is "
-                + "set by the active persona's instruction. The voice message is still one per reply.");
+        proactiveHints.setText(Messages.t("The agent offers hints on its own"));
+        voiceReplies.setText(Messages.t("Voice the replies (Piper) and send them to Telegram as voice messages"));
+        liveReplies.setText(Messages.t("Several short messages instead of one long one"));
+        Label liveHint = new Label(Messages.t("Enables the mechanism; how exactly to split (length, tone, pauses) is "
+                + "set by the active persona's instruction. The voice message is still one per reply."));
         liveHint.getStyleClass().add(Styles.TEXT_SUBTLE);
         liveHint.setWrapText(true);
-        scriptsEnabled.setText("Allow the agent to run Python scripts on the computer");
-        Label scriptsHint = new Label("Off -- the model knows nothing about scripts: it answers itself or with "
+        scriptsEnabled.setText(Messages.t("Allow the agent to run Python scripts on the computer"));
+        Label scriptsHint = new Label(Messages.t("Off -- the model knows nothing about scripts: it answers itself or with "
                 + "tools, and when asked to do something on the computer says that actions are disabled. "
-                + "Useful if it mistakes ordinary messages for tasks.");
+                + "Useful if it mistakes ordinary messages for tasks."));
         scriptsHint.getStyleClass().add(Styles.TEXT_SUBTLE);
         scriptsHint.setWrapText(true);
-        typingIndicator.setText("Show \"typing...\" in Telegram while the agent prepares a reply");
-        Label typingHint = new Label("Between the question and the first message -- always; between short "
-                + "messages -- only if the setting above is on too.");
+        typingIndicator.setText(Messages.t("Show \"typing...\" in Telegram while the agent prepares a reply"));
+        Label typingHint = new Label(Messages.t("Between the question and the first message -- always; between short "
+                + "messages -- only if the setting above is on too."));
         typingHint.getStyleClass().add(Styles.TEXT_SUBTLE);
         typingHint.setWrapText(true);
-        voiceInput.setText("Listen to voice messages sent in Telegram");
-        Label voiceInputHint = new Label("The voice message is downloaded, converted by ffmpeg and "
+        language.getItems().setAll(com.bebebe.agent.i18n.Language.values());
+        language.setConverter(new javafx.util.StringConverter<>() {
+            @Override
+            public String toString(com.bebebe.agent.i18n.Language value) {
+                return value == null ? "" : value.title();
+            }
+
+            @Override
+            public com.bebebe.agent.i18n.Language fromString(String value) {
+                return com.bebebe.agent.i18n.Language.from(value);
+            }
+        });
+        Label languageHint = new Label(Messages.t(SettingsField.LANGUAGE.warning()));
+        languageHint.getStyleClass().add(Styles.TEXT_SUBTLE);
+        languageHint.setWrapText(true);
+        voiceInput.setText(Messages.t("Listen to voice messages sent in Telegram"));
+        Label voiceInputHint = new Label(Messages.t("The voice message is downloaded, converted by ffmpeg and "
                 + "recognised by the same whisper.cpp as push-to-talk -- the [stt] section must be "
-                + "filled in. Off -- the bot answers that it does not accept voice.");
+                + "filled in. Off -- the bot answers that it does not accept voice."));
         voiceInputHint.getStyleClass().add(Styles.TEXT_SUBTLE);
         voiceInputHint.setWrapText(true);
-        Label voiceHint = new Label("The text stays, the voice follows. By default only for voice "
-                + "requests; for text ones -- tts.reply_to_text in the config.");
+        Label voiceHint = new Label(Messages.t("The text stays, the voice follows. By default only for voice "
+                + "requests; for text ones -- tts.reply_to_text in the config."));
         voiceHint.getStyleClass().add(Styles.TEXT_SUBTLE);
         voiceHint.setWrapText(true);
 
@@ -251,6 +268,7 @@ public final class SettingsPane extends ScrollPane {
                 field(SettingsField.PROACTIVE_HINTS.title(), proactiveHints),
                 field(SettingsField.VOICE_REPLIES.title(), new VBox(4, voiceReplies, voiceHint)),
                 field(SettingsField.VOICE_INPUT.title(), new VBox(4, voiceInput, voiceInputHint)),
+                field(SettingsField.LANGUAGE.title(), new VBox(4, language, languageHint)),
                 field(SettingsField.LIVE_REPLIES.title(), new VBox(4, liveReplies, liveHint)),
                 field(SettingsField.TYPING_INDICATOR.title(), new VBox(4, typingIndicator, typingHint)),
                 field(SettingsField.SCRIPTS_ENABLED.title(), new VBox(4, scriptsEnabled, scriptsHint)));
@@ -284,6 +302,7 @@ public final class SettingsPane extends ScrollPane {
         liveReplies.setSelected(settings.liveReplies());
         typingIndicator.setSelected(settings.typingIndicator());
         voiceInput.setSelected(settings.voiceInput());
+        language.setValue(settings.language());
         scriptsEnabled.setSelected(settings.scriptsEnabled());
     }
 
@@ -306,6 +325,7 @@ public final class SettingsPane extends ScrollPane {
         settings.setLiveReplies(liveReplies.isSelected());
         settings.setTypingIndicator(typingIndicator.isSelected());
         settings.setVoiceInput(voiceInput.isSelected());
+        settings.setLanguage(language.getValue());
         settings.setScriptsEnabled(scriptsEnabled.isSelected());
 
         try {

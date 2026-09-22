@@ -1,5 +1,6 @@
 package com.bebebe.agent.ui;
 
+import com.bebebe.agent.i18n.Messages;
 import atlantafx.base.theme.PrimerDark;
 import atlantafx.base.theme.Styles;
 import com.bebebe.agent.core.AgentSwitch;
@@ -66,7 +67,7 @@ public final class MainWindow extends Application {
         root.setCenter(content);
 
         Scene scene = new Scene(root, 1100, 720);
-        stage.setTitle("Server AI Agent");
+        stage.setTitle(Messages.t("Server AI Agent"));
         stage.setScene(scene);
         stage.setMinWidth(820);
         stage.setMinHeight(560);
@@ -159,7 +160,7 @@ public final class MainWindow extends Application {
     private final java.util.Map<String, javafx.scene.Node> placeholders = new java.util.HashMap<>();
 
     private Region placeholder(Section section) {
-        Label todo = new Label("This screen is not implemented yet.");
+        Label todo = new Label(Messages.t("This screen is not implemented yet."));
         todo.getStyleClass().addAll(Styles.TEXT_MUTED, Styles.TEXT_ITALIC);
         return Ui.page(Ui.header(section.title(), section.description()), todo);
     }

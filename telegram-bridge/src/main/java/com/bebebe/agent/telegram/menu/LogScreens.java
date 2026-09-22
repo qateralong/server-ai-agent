@@ -1,5 +1,6 @@
 package com.bebebe.agent.telegram.menu;
 
+import com.bebebe.agent.i18n.Messages;
 import com.bebebe.agent.logging.LogBuffer;
 import com.bebebe.agent.logging.LogEntry;
 import com.bebebe.agent.telegram.api.Dto.InlineKeyboardButton;
@@ -94,12 +95,12 @@ final class LogScreens {
     }
 
     static MenuScreen desktopStub() {
-        String text = """
+        String text = Messages.t("""
                 <b>%s</b>
 
                 The live log feed is on the "Logs" screen of the application window; files are in logs/.
 
-                <i>In server mode (server-app) this section works here.</i>""".formatted(MenuSection.LOGS.title());
+                <i>In server mode (server-app) this section works here.</i>""").formatted(MenuSection.LOGS.title());
         return new MenuScreen(MenuSection.LOGS, text, InlineKeyboardMarkup.of(List.of(MenuRenderer.navigationRow())));
     }
 

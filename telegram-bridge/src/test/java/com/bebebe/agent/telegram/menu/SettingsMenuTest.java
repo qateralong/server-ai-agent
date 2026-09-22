@@ -267,6 +267,28 @@ class SettingsMenuTest {
     }
 
     @Test
+    void languageButtonSwitchesTheInterfaceAndIsWrittenToFile() {
+        try {
+            assertEquals(com.bebebe.agent.i18n.Language.EN, settings.language());
+            assertTrue(controller.handle(CallbackData.section(MenuSection.SETTINGS))
+                    .screen().text().contains("Language: English"));
+
+            MenuResponse ru = controller.handle(CallbackData.language("ru"));
+
+            assertEquals(com.bebebe.agent.i18n.Language.RU, settings.language());
+            assertEquals("Language: Русский", ru.toast());
+
+            assertTrue(ru.screen().text().contains("🌐 Язык: Русский"),
+                    "the screen itself must already be Russian: " + ru.screen().text());
+            assertEquals(com.bebebe.agent.i18n.Language.RU,
+                    AppSettings.from(AppConfig.load(settings.file())).language(), "written to file");
+        } finally {
+
+            settings.setLanguage(com.bebebe.agent.i18n.Language.EN);
+        }
+    }
+
+    @Test
     void allSettingsButtonsFitTheLimit() {
         List<CallbackData> all = List.of(
                 CallbackData.modelList(),
@@ -278,7 +300,8 @@ class SettingsMenuTest {
                 CallbackData.hints(false),
                 CallbackData.liveReplies(true),
                 CallbackData.typingIndicator(false),
-                CallbackData.voiceInput(true));
+                CallbackData.voiceInput(true),
+                CallbackData.language("ru"));
 
         for (CallbackData data : all) {
             assertTrue(data.byteSize() <= CallbackData.WARN_BYTES,

@@ -1,5 +1,6 @@
 package com.bebebe.agent.ui;
 
+import com.bebebe.agent.i18n.Messages;
 import atlantafx.base.theme.Styles;
 import com.bebebe.agent.config.ConfigFileWriter;
 import com.bebebe.agent.logging.AppLogging;
@@ -46,7 +47,7 @@ public final class LogsPane extends BorderPane {
     private final ComboBox<String> subsystem = new ComboBox<>(FXCollections.observableArrayList("All modules"));
     private final TextField traceId = new TextField();
     private final TextField search = new TextField();
-    private final CheckBox follow = new CheckBox("Follow");
+    private final CheckBox follow = new CheckBox(Messages.t("Follow"));
     private final ComboBox<String> logLevel = new ComboBox<>(FXCollections.observableArrayList(LEVELS));
     private final Label status = new Label();
     private final Consumer<LogEntry> listener = entry -> Platform.runLater(() -> onEntry(entry));
@@ -59,12 +60,12 @@ public final class LogsPane extends BorderPane {
 
         minLevel.getSelectionModel().select("INFO+");
         subsystem.getSelectionModel().selectFirst();
-        traceId.setPromptText("trace_id");
+        traceId.setPromptText(Messages.t("trace_id"));
         traceId.setPrefColumnCount(12);
-        search.setPromptText("message text");
+        search.setPromptText(Messages.t("message text"));
         search.setPrefColumnCount(18);
         follow.setSelected(true);
-        Button clear = new Button("Reset filters");
+        Button clear = new Button(Messages.t("Reset filters"));
         clear.setOnAction(e -> {
             minLevel.getSelectionModel().select("INFO+");
             subsystem.getSelectionModel().selectFirst();
@@ -181,13 +182,13 @@ public final class LogsPane extends BorderPane {
             AppLogging.setLevel(level);
             if (configFile != null) {
                 ConfigFileWriter.update(configFile, Map.of("logging.level", level));
-                status.setText("Level " + level + " applied and written to config");
+                status.setText(Messages.t("Level ") + level + " applied and written to config");
             } else {
-                status.setText("Level " + level + " applied (no config -- not saved)");
+                status.setText(Messages.t("Level ") + level + " applied (no config -- not saved)");
             }
         } catch (RuntimeException e) {
             log.warn("Logging level not written to config: {}", e.getMessage());
-            status.setText("Level " + level + " applied but not written to config: " + e.getMessage());
+            status.setText(Messages.t("Level ") + level + " applied but not written to config: " + e.getMessage());
         }
     }
 

@@ -1,5 +1,6 @@
 package com.bebebe.agent.telegram.menu;
 
+import com.bebebe.agent.i18n.Messages;
 import com.bebebe.agent.config.AppSettings;
 import com.bebebe.agent.config.SettingsField;
 import com.bebebe.agent.telegram.api.Dto.InlineKeyboardButton;
@@ -20,6 +21,20 @@ public final class SettingsScreens {
         return root(settings, false);
     }
 
+    /**
+     * One button per language, the current one marked. A toggle would do for two, but the
+     * name of a language has to be readable before you switch to it -- so they are all shown.
+     */
+    private static List<InlineKeyboardButton> languageRow(com.bebebe.agent.i18n.Language current) {
+        List<InlineKeyboardButton> row = new ArrayList<>();
+        for (com.bebebe.agent.i18n.Language language : com.bebebe.agent.i18n.Language.values()) {
+            row.add(InlineKeyboardButton.of(
+                    (language == current ? "✅ " : "🌐 ") + language.title(),
+                    CallbackData.language(language.code()).encode()));
+        }
+        return row;
+    }
+
     public static MenuScreen root(AppSettings settings, boolean readOnly) {
         String model = settings.model();
         String providerName = AppSettings.PROVIDER_CLAUDE.equals(settings.provider()) ? "Claude" : "Ollama";
@@ -29,9 +44,10 @@ public final class SettingsScreens {
         boolean live = settings.liveReplies();
         boolean typing = settings.typingIndicator();
         boolean voiceIn = settings.voiceInput();
+        com.bebebe.agent.i18n.Language language = settings.language();
         boolean scripts = settings.scriptsEnabled();
 
-        String text = """
+        String text = Messages.t("""
                 <b>%s</b>
 
                 🤖 Provider: %s
@@ -39,6 +55,7 @@ public final class SettingsScreens {
                 👤 Access: %s
                 💡 Hints: %s
                 🔊 Voice replies: %s
+                🌐 Language: %s
                 🎤 Voice messages from you: %s
                 💬 Several short messages: %s
                 ⌨️ "Typing..." indicator: %s
@@ -47,13 +64,14 @@ public final class SettingsScreens {
                 🔐 Provider API key: %s
                 🔐 Bot token: %s
 
-                <i>%s</i>""".formatted(
+                <i>%s</i>""").formatted(
                 MenuSection.SETTINGS.title(),
                 providerName,
                 TelegramApi.escapeHtml(model.isEmpty() ? "not set" : model),
                 usernames.isEmpty() ? "no one (the bot is silent)" : String.valueOf(usernames.size()),
                 hints ? "on" : "off",
                 voice ? "on" : "off",
+                language.title(),
                 voiceIn ? "accepted" : "off",
                 live ? "on" : "off",
                 typing ? "on" : "off",
@@ -86,6 +104,7 @@ public final class SettingsScreens {
                 List.of(InlineKeyboardButton.of(
                         voice ? "🔊 Disable voice replies" : "🔊 Enable voice replies",
                         CallbackData.voiceReplies(!voice).encode())),
+                languageRow(language),
                 List.of(InlineKeyboardButton.of(
                         voiceIn ? "🎤 Do not accept voice messages" : "🎤 Accept voice messages",
                         CallbackData.voiceInput(!voiceIn).encode())),
@@ -108,13 +127,13 @@ public final class SettingsScreens {
         String current = settings.model();
 
         if (models.isEmpty()) {
-            return new MenuScreen(MenuSection.SETTINGS, """
+            return new MenuScreen(MenuSection.SETTINGS, Messages.t("""
                     <b>🧠 Model</b>
 
                     Current: <code>%s</code>
 
                     Failed to fetch the model list from the provider -- \
-                    check the key and network availability.""".formatted(TelegramApi.escapeHtml(current)),
+                    check the key and network availability.""").formatted(TelegramApi.escapeHtml(current)),
                     InlineKeyboardMarkup.of(List.of(backToSettingsRow())));
         }
 
@@ -126,12 +145,12 @@ public final class SettingsScreens {
         }
         rows.add(backToSettingsRow());
 
-        String text = """
+        String text = Messages.t("""
                 <b>🧠 Model</b>
 
                 Current: <code>%s</code>
 
-                Choose a model -- it applies immediately, without restart.""".formatted(
+                Choose a model -- it applies immediately, without restart.""").formatted(
                 TelegramApi.escapeHtml(current.isEmpty() ? "not set" : current));
 
         return new MenuScreen(MenuSection.SETTINGS, text, InlineKeyboardMarkup.of(rows));
@@ -153,24 +172,24 @@ public final class SettingsScreens {
                 : usernames.stream().map(name -> "• @" + TelegramApi.escapeHtml(name))
                         .reduce((a, b) -> a + "\n" + b).orElse("");
 
-        String text = """
+        String text = Messages.t("""
                 <b>👤 Access</b>
 
                 %s
 
                 The bin button removes a username. \
-                Changes take effect from the next message.""".formatted(list);
+                Changes take effect from the next message.""").formatted(list);
 
         return new MenuScreen(MenuSection.SETTINGS, text, InlineKeyboardMarkup.of(rows));
     }
 
     public static MenuScreen awaitingUsername() {
-        return new MenuScreen(MenuSection.SETTINGS, """
+        return new MenuScreen(MenuSection.SETTINGS, Messages.t("""
                 <b>👤 Add username</b>
 
                 Send the username in the next message -- with or without @, any case.
 
-                Cancel: /cancel""",
+                Cancel: /cancel"""),
                 InlineKeyboardMarkup.of(List.of(backToSettingsRow())));
     }
 

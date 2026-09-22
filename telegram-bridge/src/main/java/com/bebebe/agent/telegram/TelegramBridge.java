@@ -3,6 +3,7 @@ package com.bebebe.agent.telegram;
 import com.bebebe.agent.config.AppSettings;
 import com.bebebe.agent.config.SettingsField;
 import com.bebebe.agent.core.AgentReply;
+import com.bebebe.agent.i18n.Messages;
 import com.bebebe.agent.core.AgentState;
 import com.bebebe.agent.core.AgentSwitch;
 import com.bebebe.agent.core.UserMessage;
@@ -430,6 +431,11 @@ public final class TelegramBridge implements AutoCloseable {
             return;
         }
 
+        if (pending.isPresent() && message.hasDocument()) {
+            onPendingDocument(chatId, message.document());
+            return;
+        }
+
         String command = message.command();
         if (!command.isEmpty()) {
             handleCommand(chatId, command);
@@ -449,6 +455,63 @@ public final class TelegramBridge implements AutoCloseable {
             return;
         }
         replyAsAgent(chatId, message.text());
+    }
+
+    /** A long instruction is easier to send as a file than to paste into the chat. */
+    static final long MAX_TEXT_FILE_BYTES = 256 * 1024;
+
+    private void onPendingDocument(long chatId, com.bebebe.agent.telegram.api.Dto.Document document) {
+        if (!document.isPlainText()) {
+            send(chatId, "I can only read a plain text file here (.txt or .md). "
+                    + "Send the text as a message, or attach a .txt file.");
+            return;
+        }
+        if (document.fileSize() != null && document.fileSize() > MAX_TEXT_FILE_BYTES) {
+            send(chatId, "The file is too large: up to " + (MAX_TEXT_FILE_BYTES / 1024) + " KB.");
+            return;
+        }
+        String traceId = TraceContext.current().orElse(null);
+        ttsExecutor.submit(TraceContext.wrap(traceId, () -> readDocumentAsInput(chatId, document)));
+    }
+
+    private void readDocumentAsInput(long chatId, com.bebebe.agent.telegram.api.Dto.Document document) {
+        String text;
+        try {
+            var file = api.getFile(document.fileId());
+            if (file == null || file.filePath() == null || file.filePath().isBlank()) {
+                send(chatId, "Telegram did not give me this file.");
+                return;
+            }
+            byte[] bytes = api.downloadFile(file.filePath());
+            if (bytes.length > MAX_TEXT_FILE_BYTES) {
+                send(chatId, "The file is too large: up to " + (MAX_TEXT_FILE_BYTES / 1024) + " KB.");
+                return;
+            }
+            text = new String(bytes, java.nio.charset.StandardCharsets.UTF_8).strip();
+        } catch (TelegramApiException e) {
+            log.warn("File from chat {} not downloaded: {}", chatId, e.getMessage());
+            send(chatId, "Could not download the file: " + e.getMessage());
+            return;
+        }
+
+        if (text.isEmpty()) {
+            send(chatId, "The file is empty -- nothing to take from it.");
+            return;
+        }
+
+        // Consumed only now: a failed download must leave the chat still waiting for the answer.
+        Optional<PendingInput> pending = pendingInputs.consume(chatId);
+        if (pending.isEmpty()) {
+            send(chatId, "The wait is over -- open the menu again.");
+            return;
+        }
+        log.atInfo().addKeyValue("event", "input.file")
+                .addKeyValue("chat_id", chatId)
+                .addKeyValue("field", pending.get().fieldKey())
+                .addKeyValue("chars", text.length())
+                .log("Chat {}: '{}' taken from the file {} ({} chars)",
+                        chatId, pending.get().fieldKey(), document.fileName(), text.length());
+        handlePendingInput(chatId, pending.get(), text);
     }
 
     private void onVoiceMessage(long chatId, Message message) {
@@ -737,9 +800,14 @@ public final class TelegramBridge implements AutoCloseable {
         return open.section() == null ? menu.rootScreen() : menu.screenFor(open.section());
     }
 
+    /**
+     * Every message the bridge writes on its own behalf goes through here, so this is where
+     * it gets translated. Replies from the model go out via {@link #sendPlain} and are left
+     * alone -- the model already answers in the language it was asked in.
+     */
     private void send(long chatId, String text) {
         try {
-            api.sendMessage(chatId, text, null);
+            api.sendMessage(chatId, Messages.t(text), null);
         } catch (TelegramApiException e) {
             log.error("Failed to send message to chat {}: {}", chatId, e.getMessage());
         }

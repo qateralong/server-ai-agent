@@ -1,5 +1,7 @@
 package com.bebebe.agent.telegram.menu;
 
+import com.bebebe.agent.i18n.Messages;
+
 public record MenuResponse(MenuScreen screen, String toast, InputRequest inputRequest) {
 
     public static MenuResponse show(MenuScreen screen) {
@@ -7,11 +9,11 @@ public record MenuResponse(MenuScreen screen, String toast, InputRequest inputRe
     }
 
     public static MenuResponse show(MenuScreen screen, String toast) {
-        return new MenuResponse(screen, toast, null);
+        return new MenuResponse(screen, Messages.t(toast), null);
     }
 
     public static MenuResponse toast(String toast) {
-        return new MenuResponse(null, toast, null);
+        return new MenuResponse(null, Messages.t(toast), null);
     }
 
     public static MenuResponse awaitInput(MenuScreen screen, InputRequest request) {

@@ -370,8 +370,10 @@ public final class Wiring {
                 }
                 case TELEGRAM_BOT_TOKEN -> reconnectTelegram(settings, telegram, config);
 
+                // LANGUAGE needs nothing here: AppSettings has already switched Messages, and the
+                // bridge redraws the open menu on any settings change.
                 case ALLOWED_USERNAMES, PROACTIVE_HINTS, VOICE_REPLIES, LIVE_REPLIES, TYPING_INDICATOR,
-                     VOICE_INPUT, SCRIPTS_ENABLED -> { }
+                     VOICE_INPUT, LANGUAGE, SCRIPTS_ENABLED -> { }
             }
         });
     }

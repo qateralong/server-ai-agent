@@ -3,6 +3,7 @@ package com.bebebe.agent.client;
 import com.bebebe.agent.capture.HotkeyConfig;
 import com.bebebe.agent.config.AppConfig;
 import com.bebebe.agent.config.ConfigSection;
+import com.bebebe.agent.i18n.Language;
 import com.bebebe.agent.script.runtime.ScriptConfig;
 import com.bebebe.agent.transport.TransportClient;
 
@@ -22,6 +23,7 @@ public record ClientConfig(
         String token,
         String name,
         boolean tray,
+        Language language,
         HotkeyConfig hotkey,
         String audioDevice,
         Duration maxRecording,
@@ -77,6 +79,7 @@ public record ClientConfig(
                 server.requiredString("token"),
                 client.string("name", hostname()),
                 client.bool("tray", true),
+                Language.from(client.string("language", "auto")),
                 new HotkeyConfig(expand(hotkey.string("helper", "native/evdev-hotkey/build/evdev-hotkey")),
                         hotkey.string("key", "KEY_HOME"), hotkey.string("device", "")),
                 audio.string("device", ""),
