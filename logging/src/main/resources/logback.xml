@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<configuration>
+
+    <property name="dir" value="${bebebe.log.dir:-logs}"/>
+    <property name="level" value="${bebebe.log.level:-INFO}"/>
+
+    <property name="maxFileSize" value="20MB"/>
+    <property name="maxHistory" value="14"/>
+    <property name="totalSizeCap" value="500MB"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <charset>UTF-8</charset>
+
+            <pattern>%d{HH:mm:ss.SSS} %highlight(%-5level) %cyan(%logger{28}) %magenta(%replace([%X{trace_id}]){'\[\]', ''}) - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <appender name="BUFFER" class="com.bebebe.agent.logging.LogBufferAppender"/>
+
+    <appender name="ALL" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${dir}/agent.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${dir}/agent.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>${maxFileSize}</maxFileSize>
+            <maxHistory>${maxHistory}</maxHistory>
+            <totalSizeCap>${totalSizeCap}</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="ch.qos.logback.core.encoder.LayoutWrappingEncoder">
+            <charset>UTF-8</charset>
+            <layout class="com.bebebe.agent.logging.JsonLayout"/>
+        </encoder>
+    </appender>
+
+    <appender name="AGENT_CORE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${dir}/agent-core.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${dir}/agent-core.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>${maxFileSize}</maxFileSize>
+            <maxHistory>${maxHistory}</maxHistory>
+            <totalSizeCap>${totalSizeCap}</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="ch.qos.logback.core.encoder.LayoutWrappingEncoder">
+            <charset>UTF-8</charset>
+            <layout class="com.bebebe.agent.logging.JsonLayout"/>
+        </encoder>
+    </appender>
+
+    <appender name="SCRIPT_RUNTIME" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${dir}/script-runtime.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${dir}/script-runtime.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>${maxHistory}</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="ch.qos.logback.core.encoder.LayoutWrappingEncoder">
+            <charset>UTF-8</charset>
+            <layout class="com.bebebe.agent.logging.JsonLayout"/>
+        </encoder>
+    </appender>
+
+    <appender name="TELEGRAM" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${dir}/telegram-bridge.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${dir}/telegram-bridge.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>${maxFileSize}</maxFileSize>
+            <maxHistory>${maxHistory}</maxHistory>
+            <totalSizeCap>${totalSizeCap}</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="ch.qos.logback.core.encoder.LayoutWrappingEncoder">
+            <charset>UTF-8</charset>
+            <layout class="com.bebebe.agent.logging.JsonLayout"/>
+        </encoder>
+    </appender>
+
+    <appender name="SCHEDULER" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${dir}/scheduler.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${dir}/scheduler.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>${maxFileSize}</maxFileSize>
+            <maxHistory>${maxHistory}</maxHistory>
+            <totalSizeCap>${totalSizeCap}</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="ch.qos.logback.core.encoder.LayoutWrappingEncoder">
+            <charset>UTF-8</charset>
+            <layout class="com.bebebe.agent.logging.JsonLayout"/>
+        </encoder>
+    </appender>
+
+    <appender name="WATCHDOG" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${dir}/watchdog.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${dir}/watchdog.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>${maxFileSize}</maxFileSize>
+            <maxHistory>${maxHistory}</maxHistory>
+            <totalSizeCap>${totalSizeCap}</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="ch.qos.logback.core.encoder.LayoutWrappingEncoder">
+            <charset>UTF-8</charset>
+            <layout class="com.bebebe.agent.logging.JsonLayout"/>
+        </encoder>
+    </appender>
+
+    <appender name="TRANSPORT" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${dir}/transport.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${dir}/transport.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>${maxFileSize}</maxFileSize>
+            <maxHistory>${maxHistory}</maxHistory>
+            <totalSizeCap>${totalSizeCap}</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="ch.qos.logback.core.encoder.LayoutWrappingEncoder">
+            <charset>UTF-8</charset>
+            <layout class="com.bebebe.agent.logging.JsonLayout"/>
+        </encoder>
+    </appender>
+
+    <logger name="com.bebebe.agent.core">
+        <appender-ref ref="AGENT_CORE"/>
+    </logger>
+    <logger name="com.bebebe.agent.script">
+        <appender-ref ref="SCRIPT_RUNTIME"/>
+    </logger>
+    <logger name="com.bebebe.agent.telegram">
+        <appender-ref ref="TELEGRAM"/>
+    </logger>
+    <logger name="com.bebebe.agent.scheduler">
+        <appender-ref ref="SCHEDULER"/>
+    </logger>
+    <logger name="com.bebebe.agent.watchdog">
+        <appender-ref ref="WATCHDOG"/>
+    </logger>
+    <logger name="com.bebebe.agent.transport">
+        <appender-ref ref="TRANSPORT"/>
+    </logger>
+
+    <logger name="com.bebebe.agent" level="${level}"/>
+
+    <root level="WARN">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="ALL"/>
+        <appender-ref ref="BUFFER"/>
+    </root>
+
+</configuration>

@@ -1,0 +1,379 @@
+# Config for the AI-agent layer.
+#
+# Copy it to one of these paths and fill in your own values:
+#   ~/.config/bebebe-agent/config.toml   -- main path
+#   ./config/agent.toml                  -- local development (in .gitignore)
+# Or point to it explicitly: ./gradlew :supervisor-app:run -Dbebebe.config=/path/to/config.toml
+#
+# IMPORTANT: secrets live here in plain text. This is a deliberate simplification --
+# there is no separate secret store. Do not commit this file; permissions: chmod 600.
+
+[llm]
+# Model provider -- global for the whole agent: "ollama" or "claude".
+# Switched in the window (Settings) and in ⚙️ Settings in Telegram; a request
+# already in flight finishes on the old provider, new ones go to the selected one.
+provider = "ollama"
+
+# Each provider has its own key, model and endpoint -- switching does not lose
+# the others. Empty endpoint = the provider's default address; filled in = a proxy,
+# a local Ollama daemon, a self-hosted compatible service.
+[llm.ollama]
+api_key = ""                    # https://ollama.com/settings/keys; empty for a local daemon
+model = "gpt-oss:120b"          # name from /api/tags, WITHOUT the :cloud suffix
+endpoint = ""                   # default https://ollama.com; locally -- "http://localhost:11434"
+
+[llm.claude]
+api_key = ""                    # https://platform.claude.com -- a key like sk-ant-...
+model = "claude-opus-5"         # exact model id, without a date suffix
+endpoint = ""                   # default https://api.anthropic.com
+
+[claude]
+# Generation parameters for the Anthropic API (read at startup).
+max_tokens = 4096
+timeout_seconds = 120
+temperature = 0.7
+
+[ollama]
+# Ollama generation parameters (timeout, temperature, num_ctx). The key, model and
+# address are now in [llm.ollama]; the old api_key/model/base_url here are still
+# read if [llm.ollama] is empty -- backward compatibility.
+# Cloud: https://ollama.com  (needs api_key)
+# Local daemon: http://localhost:11434  (no api_key needed, leave it empty)
+base_url = "https://ollama.com"
+
+# The key is created at https://ollama.com/settings/keys
+api_key = ""
+
+# The model name exactly as returned by /api/tags -- WITHOUT the ":cloud" suffix.
+# The ":cloud" suffix is only used in the CLI (`ollama run glm-5.3:cloud`);
+# the HTTP API uses different names: gpt-oss:120b, glm-5.3, qwen3.5:397b, kimi-k2.6, ...
+# See the current list for your key via the "Check connection" button
+# in the "Ollama (test)" section of the main window.
+model = "gpt-oss:120b"
+
+# Timeout for a single request.
+timeout_seconds = 120
+
+# Generation parameters. Comment out to use the model's defaults.
+temperature = 0.7
+num_ctx = 8192
+
+[agent]
+# Starting state of the ON/OFF flag when the process launches.
+# The same flag is toggled by the button in the window and the "Power" section in Telegram.
+enabled_on_start = false
+
+# Proactive hints: the agent offers something on its own, not only answers.
+# Edited from the GUI and from Telegram (⚙️ Settings), applies on the fly.
+proactive_hints = false
+
+# Cap on calls to the model per ONE user message: the decision,
+# fixing a failed script, formulating the reply -- all from this counter.
+# A safeguard against an endless "script fails -> model fixes -> fails again" loop.
+request_budget = 15
+
+# Not read by the code yet.
+persona = "default"
+
+# "Lively style": several short messages with "typing..." instead of one long
+# one. A toggle in the window and in ⚙️ Settings in Telegram; how exactly to split
+# (length, tone, pauses) is set by the active persona's instruction.
+live_replies = false
+
+# Whether scripts are allowed. false -- the model does not see the script decision
+# types at all: it answers itself or with tools, nothing runs on the computer.
+# Edited in the window and in ⚙️ Settings in Telegram.
+scripts_enabled = true
+
+# Graceful stop: how long to wait for the current request (script) to finish
+# when the agent is switched off, before interrupting it (SIGTERM, then SIGKILL).
+stop_grace_seconds = 20
+
+[telegram]
+# false -- the bridge is not started at all.
+enabled = true
+
+# Token from @BotFather.
+bot_token = ""
+
+# Allow-list: who the bot answers. A match on either of the two is enough.
+# IMPORTANT: if both lists are empty, the bot answers no one -- this is the safe
+# default, not a bug. The @ in the username can be omitted, case does not matter.
+allowed_usernames = ["QaterAlong"]
+
+# Numeric chat ids. Your own id is visible in the log: the bot logs a WARN for
+# every rejected message with the sender's and chat's id.
+allowed_chat_ids = []
+
+# How many seconds Telegram holds the long-polling connection open when there
+# are no updates.
+poll_timeout_seconds = 30
+
+# "Typing..." in the chat while the agent prepares a reply (and between short
+# messages, if agent.live_replies is on). Edited from the window and from ⚙️
+# Settings in the chat.
+typing_indicator = true
+
+# ---------------------------------------------------------------------------
+# Speech recognition: push-to-talk on a key + local whisper.cpp.
+# Read by the code. Details -- section 3.8 in CLAUDE.md.
+# ---------------------------------------------------------------------------
+
+[stt]
+# false -- voice input is not started at all.
+enabled = true
+
+# --- hotkey (native evdev helper) ---
+
+# Built with the command: cd native/evdev-hotkey && make
+hotkey_helper = "native/evdev-hotkey/build/evdev-hotkey"
+
+# Key name as in linux/input-event-codes.h.
+# IMPORTANT: the helper does NOT grab the key, it also reaches the active window.
+# It is better to pick something unused for push-to-talk, e.g. KEY_F13.
+hotkey_key = "KEY_HOME"
+
+# Empty -- listen on all keyboards at once (usually the right choice).
+# A specific device: ./native/evdev-hotkey/build/evdev-hotkey --list
+hotkey_device = ""
+
+# --- microphone recording ---
+
+arecord_binary = "arecord"
+
+# Empty -- the default device. List: arecord -l, format "hw:2,0".
+audio_device = ""
+
+# Cap on recording duration -- a safeguard against a stuck key.
+max_seconds = 120
+
+# --- whisper.cpp ---
+
+# The binary is called whisper-cli (in old instructions -- main, it was renamed).
+# Built like this:
+#   git clone https://github.com/ggml-org/whisper.cpp && cd whisper.cpp
+#   cmake -B build && cmake --build build -j --config Release
+#   sh ./models/download-ggml-model.sh large-v3-turbo
+whisper_binary = "~/src/whisper.cpp/build/bin/whisper-cli"
+
+# Path to the ggml model. Required -- STT will not start without it.
+model_path = "~/src/whisper.cpp/models/ggml-large-v3-turbo.bin"
+
+# Speech language; "auto" -- detect it automatically.
+language = "ru"
+
+# Threads for transcription. Half the cores by default.
+threads = 4
+
+# ---------------------------------------------------------------------------
+# Running action scripts. Read by the code -- section 3.8 in CLAUDE.md.
+# ---------------------------------------------------------------------------
+
+[scripts]
+# Action scripts -- Python only.
+python_binary = "python3"
+
+# A separate venv: the model writes the scripts, dependencies are installed
+# automatically, and none of it should land in system packages. On Arch the
+# system pip is also protected by PEP 668 and will simply refuse to install.
+venv_dir = "~/.local/share/bebebe-agent/venv"
+
+# Every run script is saved here -- so you can see exactly what the agent ran.
+# Never deleted.
+scripts_dir = "~/.local/share/bebebe-agent/scripts"
+
+# An action script should finish quickly; anything longer is a hang.
+timeout_seconds = 15
+
+# Auto-installing dependencies: if a script fails with ModuleNotFoundError,
+# the package is installed into the same venv and the run is retried once.
+# WARNING: the package name is taken from the traceback, i.e. ultimately from
+# code the model wrote. This installs software from the internet without
+# confirmation -- a deliberate simplification, like the rest of this project.
+auto_install_deps = true
+pip_timeout_seconds = 120
+
+# Resource limits via prlimit (util-linux). 0 = unlimited.
+# This is NOT a sandbox: the script sees the user's files, network and display --
+# that is intentional, scripts control the user's GUI applications. The limits
+# protect against accidental resource hogging, not malicious intent.
+max_memory_mb = 2048      # virtual memory (RLIMIT_AS); generous -- numpy reserves a lot
+max_file_size_mb = 512    # size of a single file (RLIMIT_FSIZE)
+max_cpu_seconds = 0       # CPU time (RLIMIT_CPU); 0 = timeout x 2
+
+# ---------------------------------------------------------------------------
+# Script catalog: an index of scripts that worked, so they are not rewritten.
+# Read by the code -- section 3.9 in CLAUDE.md.
+# ---------------------------------------------------------------------------
+
+[library]
+# SQLite index: name, description, tags, stats, confirmation flag.
+db_path = "~/.local/share/bebebe-agent/library.db"
+
+# The script files themselves. Kept separately from the database -- easy to
+# inspect by hand.
+scripts_dir = "~/.local/share/bebebe-agent/library"
+
+# How many ready scripts to show the model as candidates.
+# More -- extra context and the temptation to reuse something loosely similar.
+search_limit = 3
+
+# ---------------------------------------------------------------------------
+# Logging. Read by the code -- section 3.10 in CLAUDE.md.
+# Files -- JSON lines in one format with a shared trace_id per request:
+#   agent.log, agent-core.log, script-runtime.log, telegram-bridge.log,
+#   scheduler.log, watchdog.log (+ .gz after rotation).
+# ---------------------------------------------------------------------------
+
+[logging]
+# Directory for log files. Relative -- from the repository root when using ./gradlew run.
+dir = "logs"
+
+# Level for the agent's own code: TRACE / DEBUG / INFO / WARN / ERROR.
+# Third-party libraries are always at WARN.
+level = "INFO"
+
+# Targeted overrides -- turn on DEBUG for one investigation, not for everything.
+# The key is a subsystem name (agent-core, script-runtime, telegram-bridge, stt-bridge,
+# ollama-client, scheduler, watchdog) or a full package/class name.
+[logging.levels]
+# script-runtime = "DEBUG"
+# "com.bebebe.agent.ollama.OllamaClient" = "TRACE"
+
+# ---------------------------------------------------------------------------
+# Built-in tools (type = "tool_call"). Section 3.12 in CLAUDE.md.
+# ---------------------------------------------------------------------------
+
+[tools.web_search]
+# auto -- Brave if a key is set, otherwise DuckDuckGo (no key, HTML parsing).
+# Brave has had no free tier since February 2026: ~$5 per 1000 requests, a card is required.
+provider = "auto"
+brave_api_key = ""
+
+# How many links to take from the results and how many to actually open.
+max_results = 6
+fetch_pages = 2
+
+# How many characters of page text to give the model.
+max_page_chars = 4000
+
+# How many times to reformulate the query if the results are off-topic.
+# Each reformulation is a model call from the message's SHARED budget.
+max_reformulations = 2
+timeout_seconds = 15
+
+# ---------------------------------------------------------------------------
+# Long-term memory: dialogue session log, people, facts. Section 3.11 in CLAUDE.md.
+# ---------------------------------------------------------------------------
+
+[memory]
+db_path = "~/.local/share/bebebe-agent/memory.db"
+
+# The pause after which the next message starts a new dialogue session.
+# While a session is active, its whole log goes into the model's context as is.
+session_idle_minutes = 60
+
+# Every how many messages (user + agent) to extract facts.
+# Each extraction is a model call. When the agent is switched off, extraction
+# runs immediately regardless of the counter.
+consolidate_every = 6
+
+[scheduler]
+# Reminders: the jobs table in a separate SQLite database.
+db_path = "~/.local/share/bebebe-agent/scheduler.db"
+
+# How often the scheduler checks whether a job's moment has arrived.
+# Firing accuracy is plus or minus this interval. The tick only runs while
+# the agent is on; while off, jobs simply sit in the database.
+tick_seconds = 30
+
+# How late a job can be and still count as firing "on time".
+# Later than that -- it is "missed": the model gets a catch-up prompt and
+# apologises. Missing is also detected by a jump in time between ticks
+# (more than 4 ticks -- the computer was asleep), and when the agent starts.
+late_tolerance_minutes = 5
+
+# Duplicate reminders (and only them) with a desktop notify-send notification.
+desktop_notifications = true
+
+[notes]
+# Notes and lists: markdown files in a separate git repository (not the one
+# with the code). The directory can be opened as an Obsidian vault and edited by hand.
+dir = "~/.agent-data/notes"
+
+# A commit on every change -- free history. No git -- just plain files.
+git_history = true
+
+[tts]
+# Voicing replies: Piper (locally) -> ffmpeg -> a voice message in Telegram.
+# Installation (no root, in a user venv):
+#   python3 -m venv ~/.local/share/bebebe-agent/piper-venv
+#   ~/.local/share/bebebe-agent/piper-venv/bin/pip install piper-tts
+#   ~/.local/share/bebebe-agent/piper-venv/bin/python -m piper.download_voices \
+#       --data-dir ~/.local/share/bebebe-agent/piper-voices ru_RU-irina-medium
+# Russian voices: ru_RU-irina-medium, ru_RU-denis-medium, ru_RU-dmitri-medium, ru_RU-ruslan-medium.
+piper_binary = "~/.local/share/bebebe-agent/piper-venv/bin/piper"
+voice = "ru_RU-irina-medium"          # voice name in voices_dir, or a path to .onnx
+voices_dir = "~/.local/share/bebebe-agent/piper-voices"
+ffmpeg_binary = "ffmpeg"              # needed for OGG/Opus -- otherwise Telegram will not accept it as voice
+length_scale = 1.0                    # >1 slower, <1 faster
+max_chars = 1500                      # longer is cut at a sentence boundary, the rest "in the text"
+timeout_seconds = 60
+
+# "Voice replies" toggle: edited from the window and from the Telegram menu.
+# Off by default. When on, replies to voice requests (push-to-talk) are voiced;
+# the reply goes as text and then as a voice message.
+voice_replies = false
+
+# Also voice replies to text messages in Telegram (when the toggle above is on).
+reply_to_text = false
+
+[watchdog]
+# Watchdog for the processing thread inside the process. Catches a hang, not a
+# crash: a crashed JVM process is only revived by systemd --user from outside
+# (see CLAUDE.md).
+enabled = true
+check_seconds = 10
+# A request in flight, heartbeat silent for longer than this AND no "legitimately
+# busy" signal (a script/model with a known timeout) -> a confirmed hang: the
+# worker thread is restarted, a notification is sent to Telegram.
+hang_timeout_seconds = 90
+
+[updates]
+# Version self-awareness: the build embeds a git commit (build-info.properties),
+# every check_hours the agent asks GitHub whether the branch has newer commits.
+# Informational only -- nothing is downloaded. The repository is private, so a
+# token is needed: github_token here, or $GITHUB_TOKEN, or an installed and
+# logged-in GitHub CLI (gh auth token) -- in that case there is no secret in
+# the config at all.
+enabled = true
+repo = ""             # owner/repo; empty -- taken from the build's origin
+branch = ""           # empty -- the build's branch
+github_token = ""
+check_hours = 24
+
+[transport]
+# Stage 2: the server for thin clients (WebSocket + TLS). Used by the headless
+# server-app (it always starts the transport); the standalone supervisor-app
+# build does not read this section yet. See CLAUDE.md, section 6.
+enabled = false
+bind = "0.0.0.0"
+port = 8765
+# Directory with server.p12 (a self-signed certificate, created by keytool on
+# first start) and clients.json (paired clients, tokens stored as hashes).
+data_dir = "~/.local/share/bebebe-agent/transport"
+server_name = "server-ai-agent"
+# PING every heartbeat_seconds; silence for two intervals -- the connection is closed.
+heartbeat_seconds = 15
+# How long to wait for AUTH after the socket opens.
+auth_timeout_seconds = 5
+# Which client to address for scripts and the clipboard when several are
+# connected (client_id from "server-app pair"). Empty -- the one that connected last.
+default_client = ""
+
+# ---------------------------------------------------------------------------
+# The sections below are not read by the code yet -- a placeholder for future steps.
+# ---------------------------------------------------------------------------
+
+[storage]
+notes_dir = "~/.local/share/bebebe-agent/notes"

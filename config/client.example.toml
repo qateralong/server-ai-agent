@@ -1,0 +1,37 @@
+# Thin client (client-app) config. Copy to config/client.toml or
+# ~/.config/bebebe-agent/client.toml, chmod 600 -- the pairing token lives here.
+# The [server] values are printed by `server-app pair "<name>"` on the server (once).
+
+[server]
+url = "wss://home-server:8765"
+fingerprint = "AA:BB:..."      # SHA-256 fingerprint of the server certificate
+client_id = ""
+token = ""
+
+[client]
+name = "laptop"                # how this computer is named in the server status
+tray = true                    # system tray icon (needs AppIndicator on GNOME)
+
+[hotkey]
+# Push-to-talk: the same evdev helper as the standalone build (native/evdev-hotkey).
+# No helper or no access to /dev/input -- the client works without voice.
+helper = "native/evdev-hotkey/build/evdev-hotkey"
+key = "KEY_HOME"
+device = ""                    # empty -- all keyboards
+
+[audio]
+# Recording via javax.sound.sampled (not arecord): 16 kHz, mono, 16 bit.
+device = ""                    # substring of the input device name; empty -- system default
+max_seconds = 120
+
+[scripts]
+# Scripts from the server run here through the same ScriptRuntime: venv, prlimit,
+# auto-install of packages on ImportError, audit in the log.
+venv_dir = "~/.local/share/bebebe-client/venv"
+scripts_dir = "~/.local/share/bebebe-client/scripts"
+timeout_seconds = 15
+auto_install_deps = true
+
+[logging]
+dir = "~/.local/share/bebebe-client/logs"
+level = "INFO"

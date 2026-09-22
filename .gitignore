@@ -1,0 +1,54 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.ipr
+*.iws
+.settings/
+.classpath
+.project
+
+# Logs and runtime data
+logs/
+*.log
+run/
+
+# Local config with secrets -- never committed.
+# Only config/agent.example.toml is committed.
+config/agent.toml
+config/*.local.toml
+config/client.toml
+config/*.local.*
+*.token
+*token.txt
+*.secret
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# STT/TTS models (large binaries)
+models/
+
+# OS
+.DS_Store
+
+# Built native helper
+native/evdev-hotkey/build/
+
+# Release artifacts
+build/release/
+
+# Claude Code local session/tooling state -- never committed
+.claude/
+.claude-*
+*.claude.local.*
+
+# Original Russian-commented copy of the project (see section 5, Conventions, in CLAUDE.md)
+_original-ru/

@@ -1,0 +1,20 @@
+[Unit]
+Description=Server AI Agent -- personal AI agent (GUI + Telegram + voice)
+After=graphical-session.target network-online.target
+PartOf=graphical-session.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=%h/server-ai-agent
+ExecStart=%h/server-ai-agent/supervisor-app/build/install/supervisor-app/bin/supervisor-app
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

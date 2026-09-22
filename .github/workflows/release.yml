@@ -1,0 +1,146 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: Version from the tag
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT";
+          else echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"; fi
+
+  linux:
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: System dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends python3-venv fakeroot util-linux
+
+      - name: Build and test
+        run: ./gradlew build -PreleaseVersion=${{ needs.version.outputs.version }} --no-daemon
+
+      - name: JARs and native Linux builds
+        run: ./gradlew releaseArtifacts -PreleaseVersion=${{ needs.version.outputs.version }} --no-daemon
+
+      - name: What got built
+        run: ls -la build/release/jars build/release/native
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-ai-agent-linux-${{ needs.version.outputs.version }}
+          if-no-files-found: error
+          path: |
+            build/release/jars/*.jar
+            build/release/native/*.tar.gz
+            build/release/native/*.deb
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: WiX Toolset
+        shell: pwsh
+        run: |
+          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) {
+            choco install wixtoolset -y --no-progress
+            "C:\Program Files (x86)\WiX Toolset v3.14\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          }
+
+      - name: Native Windows build (thin client)
+        shell: pwsh
+        run: ./gradlew releaseArtifactsWindows -x test "-PreleaseVersion=${{ needs.version.outputs.version }}" --no-daemon
+
+      - name: What got built
+        shell: pwsh
+        run: |
+          Get-ChildItem build/release/native
+          if (-not (Test-Path build/release/native/*.exe)) { Write-Error ".exe installer was not built (no WiX?)"; exit 1 }
+          if (-not (Test-Path build/release/native/*.zip)) { Write-Error "app-image zip was not built"; exit 1 }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-ai-agent-windows-${{ needs.version.outputs.version }}
+          if-no-files-found: error
+          path: |
+            build/release/native/*.zip
+            build/release/native/*.exe
+
+  release:
+    needs: [version, linux, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Full set
+        run: |
+          find dist -mindepth 2 -type f -exec mv -t dist {} +
+          find dist -mindepth 1 -type d -empty -delete
+          ls -la dist
+          n=$(find dist -maxdepth 1 -type f | wc -l)
+          if [[ "$n" -ne 10 ]]; then echo "::error::expected 10 artifacts, found $n"; exit 1; fi
+          for f in server.jar client.jar standalone-agent.jar; do test -f "dist/$f" || { echo "::error::missing $f"; exit 1; }; done
+
+      - name: GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          body: |
+            **What is inside**
+
+            | Artifact | What for |
+            |---|---|
+            | `server.jar`, `client.jar`, `standalone-agent.jar` | `java -jar …` on any OS with JDK 25 |
+            | `server-ai-agent-server-*-linux-x64.tar.gz`, `server-ai-agent-client-*-linux-x64.tar.gz`, `server-ai-agent-*-linux-x64.tar.gz` | Arch and any glibc Linux: unpack, `bin/server-ai-agent-*`; JVM bundled inside |
+            | `server-ai-agent-server_*_amd64.deb`, `server-ai-agent-client_*_amd64.deb` | Ubuntu/Debian: `sudo dpkg -i` |
+            | `server-ai-agent-client-*-windows-x64.exe` | Windows: thin client installer (into the user profile, no administrator rights) |
+            | `server-ai-agent-client-*-windows-x64.zip` | Windows: portable version, `server-ai-agent-client\server-ai-agent-client.exe` |
+
+            Windows client: scripts and the tray work; push-to-talk (evdev) and the clipboard (`wl-paste`)
+            are Linux-only for now -- the client honestly does not declare those capabilities to the server. Needs Python 3 in `PATH` (`python`).
+          files: |
+            dist/server.jar
+            dist/client.jar
+            dist/standalone-agent.jar
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.zip
+            dist/*.exe

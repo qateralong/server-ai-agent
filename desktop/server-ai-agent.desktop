@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Server AI Agent
+Comment=Personal voice and text agent: Telegram, reminders, notes
+Path=@REPO@
+Exec=@REPO@/supervisor-app/build/install/supervisor-app/bin/supervisor-app
+Icon=utilities-system-monitor
+Terminal=false
+Categories=Utility;
+StartupNotify=false

@@ -1,0 +1,20 @@
+[Unit]
+Description=Server AI Agent -- thin client (scripts, clipboard, push-to-talk for the server)
+After=graphical-session.target network-online.target
+PartOf=graphical-session.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=%h/server-ai-agent
+ExecStart=%h/server-ai-agent/client-app/build/install/client-app/bin/client-app
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target
