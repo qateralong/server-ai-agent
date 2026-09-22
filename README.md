@@ -1,21 +1,86 @@
 # Server AI Agent — персональный AI-агент для рабочего стола Linux
 
 Один JVM-процесс, в котором живут окно управления (JavaFX), Telegram-бот,
-голосовой ввод по клавише (whisper.cpp), озвучка (Piper), напоминания, заметки,
+голосовой ввод по клавише и голосовые сообщения в Telegram (whisper.cpp),
+озвучка ответов (Piper), напоминания, заметки,
 долговременная память о людях и выполнение Python-скриптов, которые пишет модель.
 Модель — Ollama (облако или локальный демон) либо Claude (Anthropic API),
 переключается на лету.
 
 Это **личный однопользовательский** агент под конкретную машину: Arch Linux,
 Wayland, GNOME. Переносимость не цель. Подробное устройство, решения и их
-причины — в [`CLAUDE.md`](CLAUDE.md); этот файл — про то, как поднять с нуля
-и как жить с ним потом.
+причины разобраны в комментариях к коду и в `config/agent.example.toml`;
+этот файл — про то, как поставить, поднять с нуля и как жить с ним потом.
 
 ---
 
-## 1. Сборка с нуля на чистом Arch
+## 1. Установка готовым пакетом
 
-### 1.1 Пакеты
+У каждого [релиза](https://github.com/qateralong/server-ai-agent/releases)
+три сборки — **агент с окном**, **сервер** (headless, раздел 7) и **тонкий
+клиент** (раздел 8) — в форматах их систем. JVM лежит внутри пакета, **Java
+ставить не нужно**.
+
+| Файл | Что это |
+|---|---|
+| `server-ai-agent-<v>-1-x86_64.pkg.tar.zst` | Arch: агент с окном |
+| `server-ai-agent-client-<v>-1-x86_64.pkg.tar.zst` | Arch: тонкий клиент |
+| `server-ai-agent_<v>_amd64.deb` | Ubuntu/Debian: агент с окном |
+| `server-ai-agent-server_<v>_amd64.deb` | Ubuntu/Debian: сервер |
+| `server-ai-agent-client_<v>_amd64.deb` | Ubuntu/Debian: тонкий клиент |
+| `*-linux-x64.tar.gz` (×3) | Любой glibc-Linux без пакетного менеджера: распаковать и запустить `bin/…` |
+| `server-ai-agent-<v>-windows-x64.exe`, `…-client-…exe` | Windows: установщики в профиль пользователя, без прав администратора |
+| `*-windows-x64.zip` (×2) | Windows: те же две сборки, переносимые |
+| `standalone-agent.jar`, `server.jar`, `client.jar` | `java -jar …` на любой ОС с JDK 25 |
+
+```bash
+# Arch
+sudo pacman -U server-ai-agent-0.2.2-1-x86_64.pkg.tar.zst
+
+# Ubuntu/Debian
+sudo dpkg -i server-ai-agent_0.2.2_amd64.deb
+
+# без пакетного менеджера
+tar xzf server-ai-agent-0.2.2-linux-x64.tar.gz
+./server-ai-agent/bin/server-ai-agent
+```
+
+Arch-пакет кладёт сборку в `/opt/server-ai-agent`, ссылку в `/usr/bin` и ярлык
+в меню приложений; `.deb` от jpackage ставит туда же. Запуск — командой
+`server-ai-agent` или из меню приложений.
+
+Два момента, о которых пакет не позаботится:
+
+* **Конфига он не создаёт.** Автосоздание при первом запуске работает только
+  в репозитории, где рядом лежит `config/agent.example.toml`; у установленной
+  сборки рабочий каталог произвольный. Возьмите образец из репозитория
+  и положите его по постоянному пути, а пути внутри задайте **абсолютными**:
+
+  ```bash
+  mkdir -p ~/.config/bebebe-agent
+  curl -o ~/.config/bebebe-agent/config.toml \
+      https://raw.githubusercontent.com/qateralong/server-ai-agent/main/config/agent.example.toml
+  chmod 600 ~/.config/bebebe-agent/config.toml
+  ```
+
+* **Внешние программы в пакет не входят**: whisper.cpp (распознавание), Piper
+  (озвучка), `ffmpeg`, `wl-clipboard`, evdev-хелпер для push-to-talk. Без них
+  агент работает как текстовый бот с окном, а чего не хватает — пишет в лог
+  на старте. Как их поставить — разделы 2.1 и 2.3–2.5.
+
+**Windows** — не среда этого агента: клавиша через evdev, буфер через
+`wl-paste` и уведомления через `notify-send` существуют только под Linux,
+поэтому голосовой ввод, буфер обмена и всплывающие напоминания там не
+работают. Окно, Telegram, модель, память и заметки — работают. Ручной проверки
+на Windows не было, CI проверяет только сборку.
+
+Если нужна правка кода или своя ветка — собирайте из исходников, раздел 2.
+
+---
+
+## 2. Сборка с нуля на чистом Arch
+
+### 2.1 Пакеты
 
 ```bash
 # обязательное: сборка и работа окна, Telegram, скриптов
@@ -24,7 +89,7 @@ sudo pacman -S --needed jdk-openjdk git base-devel python gtk3 libxtst
 # голосовой ввод (push-to-talk): запись микрофона и чтение клавиши из /dev/input
 sudo pacman -S --needed alsa-utils pipewire-alsa libevdev cmake
 
-# озвучка ответов и голосовые в Telegram (Piper ставится отдельно, см. 1.5)
+# озвучка ответов и голосовые в Telegram (Piper ставится отдельно, см. 2.5)
 sudo pacman -S --needed ffmpeg
 
 # буфер обмена под Wayland и всплывающие напоминания
@@ -58,12 +123,12 @@ JavaFX 27 и AtlantaFX **системными пакетами не ставят
 но ниже описан путь без AUR: whisper.cpp собирается из исходников, Piper
 ставится `pip`-ом в отдельный venv — так версии совпадают с тем, что проверено.
 
-### 1.2 Клонировать и собрать
+### 2.2 Клонировать и собрать
 
 ```bash
 git clone git@github.com:qateralong/server-ai-agent.git ~/server-ai-agent
 cd ~/server-ai-agent
-./gradlew build          # ~2 минуты: компиляция всех модулей и 716 офлайн-тестов
+./gradlew build          # ~3 минуты: компиляция всех модулей и 742 офлайн-теста
 ```
 
 Тесты ходят только в локальные заглушки; интернет для сборки нужен один раз —
@@ -73,7 +138,7 @@ Python-venv во временном каталоге — это ожидаемы
 Путь `~/server-ai-agent` зашит в `systemd/server-ai-agent.service` (`%h/server-ai-agent`) — если
 клонируете в другое место, поправьте `WorkingDirectory` и `ExecStart` там.
 
-### 1.3 Голосовой ввод: evdev-хелпер и группа `input`
+### 2.3 Голосовой ввод: evdev-хелпер и группа `input`
 
 В Wayland нет глобальных горячих клавиш, поэтому нажатие читается напрямую
 из `/dev/input` маленькой C-программой:
@@ -89,9 +154,9 @@ sudo usermod -aG input $USER                 # доступ к /dev/input/event*
 
 > Группа `input` даёт возможность читать любой ввод в системе. Для личной
 > машины это принятый способ; более узкая альтернатива — правило udev на одно
-> устройство. Подробнее — CLAUDE.md, раздел 3.7.
+> устройство.
 
-### 1.4 whisper.cpp и модель
+### 2.4 whisper.cpp и модель
 
 ```bash
 git clone https://github.com/ggml-org/whisper.cpp ~/src/whisper.cpp
@@ -104,7 +169,7 @@ sh ./models/download-ggml-model.sh large-v3-turbo     # ~1.6 ГБ
 Бинарник — `build/bin/whisper-cli` (не `main`, проект его переименовал).
 Для русского берите `large-v3-turbo`; `tiny`/`base` практически бесполезны.
 
-### 1.5 Piper (озвучка)
+### 2.5 Piper (озвучка)
 
 ```bash
 python3 -m venv ~/.local/share/bebebe-agent/piper-venv
@@ -122,7 +187,7 @@ python3 -m venv ~/.local/share/bebebe-agent/piper-venv
 
 ---
 
-## 2. Первый запуск и настройка через окно
+## 3. Первый запуск и настройка через окно
 
 ```bash
 cd ~/server-ai-agent
@@ -153,18 +218,25 @@ cd ~/server-ai-agent
    состоянии — им можно включить обратно.
 6. В Telegram: `/start` → ⚡ Питание → включить → написать что угодно.
 
+**Голосовые сообщения в Telegram.** Записанное в чате голосовое агент скачивает,
+переводит `ffmpeg`-ом в 16 кГц WAV и распознаёт тем же whisper.cpp, что и
+push-to-talk, — то есть работает это только при заполненной секции `[stt]`
+(раздел 2.4). В ответ приходит «🎤 распознанный текст» и обычный ответ агента.
+Выключается тумблером `telegram.voice_input`: окно → Настройки или ⚙️ Настройки
+в чате; тогда бот прямо говорит, что голосовые не принимает.
+
 Секреты (API key, токен бота) правятся **только в окне**: в Telegram-меню
 они видны как «задан / не задан» и в чат не отправляются. Всё, чего нет в форме
 (пути к whisper.cpp и Piper, клавиша push-to-talk, таймауты, лимиты скриптов),
-живёт в `config/agent.toml` с комментариями и читается на старте — см. образец
-и таблицу «что применяется на лету» в CLAUDE.md, раздел 3.5.
+живёт в `config/agent.toml` и читается **на старте**: у каждого ключа там есть
+комментарий, что он делает и когда применяется.
 
 Порядок поиска конфига: `-Dbebebe.config=…` → `$BEBEBE_CONFIG` →
 `~/.config/bebebe-agent/config.toml` → `./config/agent.toml`.
 
 ---
 
-## 3. Автозапуск: `systemd --user`
+## 4. Автозапуск: `systemd --user`
 
 Падение всего процесса изнутри Java не ловится — того, кто ловил бы, уже нет.
 Поэтому за перезапуск отвечает пользовательский юнит systemd; за зависание
@@ -203,7 +275,7 @@ sed "s|@REPO@|$PWD|g" desktop/server-ai-agent.desktop > ~/.local/share/applicati
 
 ---
 
-## 4. Логи и статус
+## 5. Логи и статус
 
 ### В окне
 
@@ -267,14 +339,14 @@ journalctl --user -u server-ai-agent -f          # stdout процесса: ст
 
 ---
 
-## 5. Известные ограничения и риски
+## 6. Известные ограничения и риски
 
 Два решения ниже — **осознанные компромиссы личного однопользовательского
 агента**, а не недосмотр. Они дёшевы ровно до тех пор, пока агентом пользуется
 один человек на своей машине; если это изменится, их придётся пересмотреть
 первыми.
 
-### 5.1 Сгенерированный код выполняется с правами пользователя, без строгой изоляции
+### 6.1 Сгенерированный код выполняется с правами пользователя, без строгой изоляции
 
 Скрипты, которые пишет модель, запускаются обычным Python **от вашего
 пользователя**: с вашим `$HOME`, дисплеем, сессией D-Bus, доступом к сети
@@ -297,7 +369,7 @@ journalctl --user -u server-ai-agent -f          # stdout процесса: ст
 подтверждения. Текст веб-страниц и буфера обмена попадает в контекст модели —
 это поверхность для prompt injection; ограничитель тот же — подтверждение.
 
-### 5.2 Конфиг и секреты хранятся открытым текстом
+### 6.2 Конфиг и секреты хранятся открытым текстом
 
 `config/agent.toml` содержит API-ключи провайдеров, токен Telegram-бота и,
 при наличии, ключ Brave и токен GitHub — обычным текстом. Keyring, шифрования
@@ -309,7 +381,7 @@ journalctl --user -u server-ai-agent -f          # stdout процесса: ст
 Чего это **не** защищает: любой процесс от вашего пользователя (и любой
 скрипт из 5.1) может прочитать файл. Утечка домашнего каталога — утечка ключей.
 
-### 5.3 Прочее, о чём стоит знать
+### 6.3 Прочее, о чём стоит знать
 
 * **Группа `input`** ради push-to-talk даёт чтение всего ввода в системе.
 * **Белый список Telegram — единственная авторизация.** Проверка по username
@@ -326,7 +398,7 @@ journalctl --user -u server-ai-agent -f          # stdout процесса: ст
   и факты из памяти уходят к ним. Локально остаётся только аудио (whisper.cpp,
   Piper). Полностью локальный режим — локальный Ollama.
 
-### 5.4 Что пересмотреть, если агент станет доступен кому-то ещё
+### 6.4 Что пересмотреть, если агент станет доступен кому-то ещё
 
 Как только появляется второй пользователь, второй чат или общая машина,
 список выше превращается из компромиссов в дыры. Минимум:
@@ -352,7 +424,7 @@ journalctl --user -u server-ai-agent -f          # stdout процесса: ст
 
 ---
 
-## 6. Сервер на удалённой машине (headless, Этап 2)
+## 7. Сервер на удалённой машине (headless, Этап 2)
 
 Второй способ запуска — `server-app`: тот же агент **без окна и без JavaFX**
 на машине, где нет дисплея (VPS, домашний сервер, Ubuntu по SSH). Скрипты,
@@ -361,16 +433,19 @@ journalctl --user -u server-ai-agent -f          # stdout процесса: ст
 отвечает «нет связи с компьютером»). Модель, память, Telegram, напоминания,
 заметки, персоны, TTS, watchdog — всё на сервере, как раньше.
 
-### 6.1 Установка на Ubuntu
+### 7.1 Установка на Ubuntu
+
+Готовый `server-ai-agent-server_<v>_amd64.deb` из релиза (раздел 1) избавляет
+от сборки и от JDK; ниже — путь из исходников, если нужна своя ветка.
 
 ```bash
 sudo apt install -y openjdk-25-jdk git python3-venv ffmpeg
-# whisper.cpp -- как в разделе 1.4 (cmake, модель); Piper -- как в 1.5, если нужны голосовые ответы
+# whisper.cpp -- как в разделе 2.4 (cmake, модель); Piper -- как в 2.5, если нужны голосовые ответы
 git clone git@github.com:qateralong/server-ai-agent.git ~/server-ai-agent && cd ~/server-ai-agent
 ./gradlew :server-app:installDist
 ```
 
-### 6.2 Конфигурация — только файл, и это намеренно
+### 7.2 Конфигурация — только файл, и это намеренно
 
 ```bash
 cp config/agent.example.toml config/agent.toml && chmod 600 config/agent.toml
@@ -389,7 +464,7 @@ $EDITOR config/agent.toml
 или токен вслепую из чата на машине, до которой идти по SSH, — способ остаться
 без связи. Один источник правды, один способ его менять.
 
-### 6.3 Автозапуск
+### 7.3 Автозапуск
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -403,7 +478,7 @@ sudo loginctl enable-linger $USER     # иначе user-юнит останов�
 что у настольного. Порт транспорта должен быть доступен клиенту:
 `sudo ufw allow 8765/tcp` либо SSH-туннель.
 
-### 6.4 Паринг клиента
+### 7.4 Паринг клиента
 
 Окна нет, поэтому токены выпускаются из командной строки на сервере:
 
@@ -417,7 +492,7 @@ sudo loginctl enable-linger $USER     # иначе user-юнит останов�
 На диске остаётся только хэш токена (`clients.json`, права 600); запущенный
 сервер подхватывает новых клиентов без перезапуска.
 
-### 6.5 Статус и логи
+### 7.5 Статус и логи
 
 * **Telegram** → `/menu`: **📊 Статус** (агент, модель и её доступность,
   подключённые клиенты, watchdog, диск, версия, последняя ошибка, путь
@@ -432,18 +507,19 @@ tail -f ~/server-ai-agent/logs/transport.log | jq -r '.msg'                     
 grep '"remote.no_client"' ~/server-ai-agent/logs/agent-core.log | tail           # когда компьютер был не на связи
 ```
 
-Подробно об устройстве — CLAUDE.md, раздел 6.6.
 
 ---
 
-## 7. Тонкий клиент на вашем компьютере (Linux)
+## 8. Тонкий клиент на вашем компьютере (Linux)
 
-Пара к серверу из раздела 6: процесс без окна и без модели, который выполняет
+Пара к серверу из раздела 7: процесс без окна и без модели, который выполняет
 скрипты, читает буфер и записывает голос по клавише — и всё это отдаёт серверу.
+Ставится и готовым пакетом (`…-client-…pkg.tar.zst`, `…-client_…amd64.deb`,
+`.exe` под Windows — раздел 1); ниже — из исходников.
 
 ```bash
 cd ~/server-ai-agent && ./gradlew :client-app:installDist
-cd native/evdev-hotkey && make && cd -                      # push-to-talk (раздел 1.3: группа input)
+cd native/evdev-hotkey && make && cd -                      # push-to-talk (раздел 2.3: группа input)
 cp config/client.example.toml config/client.toml && chmod 600 config/client.toml
 $EDITOR config/client.toml           # блок [server] -- из «server-app pair "ноутбук"» на сервере
 cp systemd/server-ai-agent-client.service ~/.config/systemd/user/
@@ -458,17 +534,16 @@ systemctl --user daemon-reload && systemctl --user enable --now server-ai-agent-
 работает без неё. Настроек в UI нет — только `client.toml`.
 
 Логи клиента — `~/.local/share/bebebe-client/logs/`, процесс —
-`journalctl --user -u server-ai-agent-client -f`. Подробно — CLAUDE.md, раздел 6.8.
+`journalctl --user -u server-ai-agent-client -f`.
 
 ---
 
-## 8. Где что лежит
+## 9. Где что лежит
 
 ```
-CLAUDE.md                  устройство, решения и их причины -- главный документ
 config/agent.example.toml  все секции конфига с комментариями
 config/agent.toml          ваш конфиг (создаётся при первом запуске, в git не попадает)
-config/client.example.toml конфиг тонкого клиента (раздел 7)
+config/client.example.toml конфиг тонкого клиента (раздел 8)
 systemd/                   юниты systemd --user: server-ai-agent (окно), server-ai-agent-server (headless), server-ai-agent-client
 desktop/                   ярлык для GNOME
 native/evdev-hotkey/       хелпер push-to-talk (C, libevdev)
@@ -479,3 +554,10 @@ logs/                      JSON-логи по подсистемам
 
 Команды разработки: `./gradlew build` (всё + тесты), `./gradlew test`,
 `./gradlew :telegram-bridge:test` (один модуль), `./gradlew :supervisor-app:run`.
+
+Собрать то же, что кладётся в релиз: `./gradlew releaseArtifacts
+-PreleaseVersion=0.2.2-local` → `build/release/{jars,native}`. Соберётся то,
+для чего на машине есть инструменты: на Arch — `.pkg.tar.zst` (нужен `makepkg`),
+на Ubuntu — `.deb` (`dpkg-deb`, `fakeroot`); Windows-сборку делает только CI.
+Релиз выпускается тегом `v*` — его публикует
+[`.github/workflows/release.yml`](.github/workflows/release.yml).
