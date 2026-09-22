@@ -62,6 +62,8 @@ tasks.register("releaseArtifacts") {
     dependsOn(":server-app:packageNative", ":client-app:packageNative", ":supervisor-app:packageNative")
 }
 
+//Bebebe
+
 tasks.register("releaseArtifactsWindows") {
     group = "distribution"
     description = "Windows part of the release: thin client and the GUI build -- app-image zip and .exe installer"
