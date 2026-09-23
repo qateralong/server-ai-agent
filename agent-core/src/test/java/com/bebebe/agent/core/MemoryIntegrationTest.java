@@ -132,6 +132,50 @@ class MemoryIntegrationTest {
         assertTrue(system.contains("не ест мясо"), system);
     }
 
+    /**
+     * The feedback loop: the model says which remembered facts it leaned on, and the ranking
+     * finally has something to learn from besides which words happen to overlap.
+     */
+    @Test
+    void theModelSaysWhichFactsItUsedAndThatIsRecorded() {
+        AgentCore core = core(100);
+        com.bebebe.agent.memory.Fact fact = memory.addFact("Пользователь пьёт кофе без сахара",
+                FactCategory.PREFERENCE, null, null, List.of());
+        stub.enqueue("""
+                {"type":"reply","reply":"Сделаю без сахара.","used_facts":[%d]}""".formatted(fact.id()));
+
+        core.handle(ask("свари мне кофе"));
+
+        assertEquals(1, memory.fact(fact.id()).orElseThrow().usedCount());
+        assertTrue(stub.requests().getFirst().toString().contains("used_facts"),
+                "the field has to be in the schema, or the model cannot answer with it");
+    }
+
+    @Test
+    void factNumbersTheModelInventedAreIgnored() {
+        AgentCore core = core(100);
+        com.bebebe.agent.memory.Fact fact = memory.addFact("Пользователь пьёт чай",
+                FactCategory.PREFERENCE, null, null, List.of());
+        stub.enqueue("""
+                {"type":"reply","reply":"ок","used_facts":[9999]}""");
+
+        core.handle(ask("что я пью?"));
+
+        assertEquals(0, memory.fact(fact.id()).orElseThrow().usedCount(),
+                "a number that was never shown must teach the ranking nothing");
+    }
+
+    @Test
+    void withNothingRememberedTheSchemaDoesNotAskWhichFactsWereUsed() {
+        AgentCore core = core(100);
+        stub.enqueueReply("Привет!");
+
+        core.handle(ask("привет"));
+
+        assertFalse(stub.requests().getFirst().toString().contains("used_facts"),
+                "a field the model cannot fill honestly is a field it will fill anyway");
+    }
+
     @Test
     void unmentionedPeopleStayOutOfPrompt() {
         AgentCore core = core(100);
@@ -196,13 +240,39 @@ class MemoryIntegrationTest {
         stub.enqueue("""
                 {"entities":[{"name":"Петя","relation":"","aliases":[],"match":{"entity_id":0,"confidence":"none"}}],
                  "facts":[{"text":"Петя переехал в Питер","category":"event","date":"","entities":["Петя"]}]}""");
+        stub.enqueue("""
+                {"summary":"Пользователь рассказал о переезде Пети в Питер.","open":[]}""");
 
+        long sessionId = memory.activeSession("TELEGRAM:7").orElseThrow().id();
         agentSwitch.turnOff();
 
-        assertEquals(2, stub.callCount(), "onBeforeStop must trigger extraction immediately");
+        assertEquals(3, stub.callCount(),
+                "onBeforeStop must extract the facts and summarise the conversation before closing it");
         assertTrue(memory.findByName("Петя").isPresent());
         assertTrue(memory.activeSession("TELEGRAM:7").isEmpty(), "session must be closed");
         assertEquals(0, memory.activeSessions().size());
+        assertTrue(memory.session(sessionId).orElseThrow().summary().contains("переезде"),
+                "a closed conversation must leave a summary behind: its log is no longer context");
+    }
+
+    /**
+     * The summary is written while the agent is still on, and only once. Getting this wrong is
+     * invisible: the work would be handed to a thread that is about to be shut down, and the
+     * conversation would simply vanish.
+     */
+    @Test
+    void closingAlreadySummarisedSessionCostsNothing() {
+        AgentCore core = core(100);
+        stub.enqueueReply("ок");
+        core.handle(ask("привет"));
+        long sessionId = memory.activeSession("TELEGRAM:7").orElseThrow().id();
+        memory.saveSummary(sessionId, "уже записано");
+        int before = stub.callCount();
+
+        memory.endSession(sessionId);
+
+        assertEquals(before, stub.callCount(), "a session that already has a summary is left alone");
+        assertEquals("уже записано", memory.session(sessionId).orElseThrow().summary());
     }
 
     @Test

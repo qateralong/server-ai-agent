@@ -37,17 +37,20 @@ public final class MemoryConsolidator {
 
     static final int BUDGET_PER_RUN = 2;
 
-    /**
-     * Deliberately high: below this, wordings that share most of their words are usually two
-     * different facts about the same thing ("любит чай" / "любит чай без сахара"), and dropping
-     * the second one would lose the detail.
-     */
-    private static final double DUPLICATE_AT = 0.8;
-
     private final MemoryStore memory;
 
     /** Session id -> the last tail we already spent a model call on. In memory: a restart may retry. */
     private final java.util.concurrent.ConcurrentHashMap<Long, Long> attempted = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Sessions whose summary has already been attempted, successfully or not.
+     *
+     * <p>Closing a session can be reached from two directions at once -- the switch-off hook does
+     * it synchronously, the listener does it in the background -- and a summary that failed to
+     * parse leaves nothing on disk for the second one to notice. Without this, a model having a
+     * bad day would be asked to summarise the same conversation twice in a row.
+     */
+    private final Set<Long> summarized = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private final java.util.function.Supplier<LlmProvider> llm;
 
@@ -80,9 +83,10 @@ public final class MemoryConsolidator {
         try {
             budget.spend("fact extraction");
             List<Entity> known = memory.entities();
+            List<Fact> shown = related(tail);
             LlmResponse response = llm.get().chat(new LlmRequest(
                     MemoryProtocol.extractionSystemPrompt(), List.of(),
-                    MemoryProtocol.extractionUserPrompt(known, tail), 0.2,
+                    MemoryProtocol.extractionUserPrompt(known, shown, tail), 0.2,
                     MemoryProtocol.extractionSchema()));
 
             JsonNode root = parse(session, response.text());
@@ -90,7 +94,8 @@ public final class MemoryConsolidator {
 
                 return List.of();
             }
-            questions = apply(session, tail, known, root);
+            questions = apply(session, tail, known, root,
+                    shown.stream().map(Fact::id).collect(java.util.stream.Collectors.toSet()));
         } catch (LlmException e) {
 
             log.warn("Consolidation of session {} failed: {} -- the messages are kept for the next run",
@@ -136,46 +141,25 @@ public final class MemoryConsolidator {
         return null;
     }
 
+    /** How much of what is already remembered is shown to extraction so it can mark replacements. */
+    private static final int RELATED_FACTS = 40;
+
+    private static final int RELATED_SCANNED = 500;
+
     /**
-     * The same fact said twice in slightly different words. Extraction runs on overlapping tails
-     * and on a rephrased conversation, so "Саша не ест мясо" and "Саша не ест мяса" would
-     * otherwise pile up as two facts and both go into the prompt.
+     * What is already remembered around this piece of conversation.
      *
-     * <p>Compared lexically, not by asking the model: a comparison per fact per run costs money
-     * on background work, and a wrong "yes" from the model silently loses a real new fact. This
-     * only catches near-identical wording -- contradictions ("переехал в Москву" after "живёт в
-     * Казани") are a different problem and are still in the backlog.
-     *
-     * @return the fact it duplicates, or null
+     * <p>Ranked against the tail by the same relevance used to build the prompt, not just taken as
+     * "the latest 40": a contradiction usually concerns something said long ago -- lives in Kazan,
+     * works at such-and-such -- and recency would be exactly the wrong filter for it.
      */
-    private Fact duplicateOf(String text, List<Long> entityIds) {
-        List<Fact> neighbours = entityIds.isEmpty()
-                ? memory.factsAboutUser()
-                : memory.factsOf(entityIds.getFirst());
-        Set<String> words = FactRelevance.stems(text);
-        if (words.isEmpty()) {
-            return null;
-        }
-        for (Fact existing : neighbours) {
-            if (similarity(words, FactRelevance.stems(existing.text())) >= DUPLICATE_AT) {
-                return existing;
-            }
-        }
-        return null;
+    private List<Fact> related(List<DialogMessage> tail) {
+        String text = tail.stream().map(DialogMessage::text).reduce("", (a, b) -> a + " " + b);
+        return FactRelevance.pick(memory.allFacts(RELATED_SCANNED), text, Instant.now(), RELATED_FACTS);
     }
 
-    /** Jaccard over stems: shared words divided by all words seen in either. */
-    private static double similarity(Set<String> a, Set<String> b) {
-        if (a.isEmpty() || b.isEmpty()) {
-            return 0;
-        }
-        int shared = 0;
-        for (String word : a) {
-            if (b.contains(word)) {
-                shared++;
-            }
-        }
-        return (double) shared / (a.size() + b.size() - shared);
+    private Fact duplicateOf(String text, List<Long> entityIds) {
+        return FactDedup.duplicateOf(memory, text, entityIds).orElse(null);
     }
 
     private static String cut(String text) {
@@ -189,7 +173,8 @@ public final class MemoryConsolidator {
     private List<AgentReply.EntityQuestion> apply(DialogSession session,
                                                   List<DialogMessage> tail,
                                                   List<Entity> known,
-                                                  JsonNode root) {
+                                                  JsonNode root,
+                                                  Set<Long> shown) {
 
         Map<String, Long> resolved = new LinkedHashMap<>();
         Map<String, PendingResolution> asked = new LinkedHashMap<>();
@@ -243,6 +228,7 @@ public final class MemoryConsolidator {
 
         Long sourceId = tail.getLast().id();
         int stored = 0;
+        int superseded = 0;
         for (JsonNode node : root.path("facts")) {
             String text = node.path("text").asText("").strip();
             if (text.isEmpty()) {
@@ -272,13 +258,17 @@ public final class MemoryConsolidator {
                 holdFor.heldFacts().add(new HeldFact(text, category, date, entityIds));
             } else if (duplicateOf(text, entityIds) instanceof Fact existing) {
 
+                // Not stored twice, but not ignored either: hearing the same thing again is
+                // evidence, and it is what separates a fact the user lives by from one said once.
+                memory.confirmFact(existing.id());
                 log.atDebug()
                         .addKeyValue("event", "memory.duplicate")
                         .addKeyValue("fact_id", existing.id())
-                        .log("«{}» is already known as «{}» -- not stored again", text, existing.text());
+                        .log("«{}» is already known as «{}» -- counted as a confirmation", text, existing.text());
             } else {
-                memory.addFact(text, category, date, sourceId, entityIds);
+                Fact added = memory.addFact(text, category, date, sourceId, entityIds);
                 stored++;
+                superseded += supersede(node, added, shown);
             }
         }
 
@@ -287,9 +277,10 @@ public final class MemoryConsolidator {
                 .addKeyValue("session_id", session.id())
                 .addKeyValue("messages", tail.size())
                 .addKeyValue("facts", stored)
+                .addKeyValue("superseded", superseded)
                 .addKeyValue("questions", asked.size())
-                .log("Session {}: {} messages -> {} facts, questions: {}",
-                        session.id(), tail.size(), stored, asked.size());
+                .log("Session {}: {} messages -> {} facts ({} replaced), questions: {}",
+                        session.id(), tail.size(), stored, superseded, asked.size());
 
         List<AgentReply.EntityQuestion> questions = new ArrayList<>();
         for (PendingResolution question : asked.values()) {
@@ -298,6 +289,97 @@ public final class MemoryConsolidator {
                     question.token(), question.mention(), question.candidate(), question.heldFacts().size()));
         }
         return questions;
+    }
+
+    /**
+     * Marks what the new fact makes obsolete.
+     *
+     * <p>Only ids the model was actually shown are accepted, and never the fact itself: the model
+     * happily invents numbers, and a wrong one here would silently retire something true.
+     *
+     * @return how many facts stopped being current
+     */
+    private int supersede(JsonNode node, Fact added, Set<Long> shown) {
+        int count = 0;
+        for (JsonNode ref : node.path("replaces")) {
+            long oldId = ref.asLong(0);
+            if (oldId <= 0 || oldId == added.id()) {
+                continue;
+            }
+            if (!shown.contains(oldId)) {
+
+                // A number the model was never given. Left alone rather than trusted: it may well
+                // be the id of something true, and retiring a true fact is invisible from outside.
+                log.atWarn()
+                        .addKeyValue("event", "memory.replaces_unknown")
+                        .addKeyValue("fact_id", oldId)
+                        .log("The model wants to replace fact #{}, which it was not shown -- ignored", oldId);
+                continue;
+            }
+            if (memory.supersede(oldId, added.id(), "replaced during consolidation")) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Turns a finished conversation into the few lines that outlive it.
+     *
+     * <p>Its own budget, like extraction: this is background work, and its failure must not take
+     * attempts away from answering the user. Done once -- a session that already has a summary is
+     * left alone, because closing can be reached from more than one path.
+     *
+     * @return the summary, or empty when there was nothing to summarise
+     */
+    public Optional<String> summarize(DialogSession session) {
+        DialogSession fresh = memory.session(session.id()).orElse(session);
+        if (fresh.hasSummary()) {
+            return Optional.of(fresh.summary());
+        }
+        List<DialogMessage> messages = memory.messages(fresh.id());
+        if (messages.stream().noneMatch(m -> m.role() == com.bebebe.agent.memory.MessageRole.USER)) {
+            return Optional.empty();
+        }
+        if (!summarized.add(fresh.id())) {
+            log.debug("Session {}: the summary has already been attempted", fresh.id());
+            return Optional.empty();
+        }
+
+        RequestBudget budget = new RequestBudget(1);
+        try {
+            budget.spend("session summary");
+            LlmResponse response = llm.get().chat(new LlmRequest(
+                    MemoryProtocol.summarySystemPrompt(), List.of(),
+                    MemoryProtocol.summaryUserPrompt(messages), 0.2,
+                    MemoryProtocol.summarySchema()));
+
+            JsonNode root = parse(fresh, response.text());
+            if (root == null) {
+                return Optional.empty();
+            }
+            String summary = root.path("summary").asText("").strip();
+            List<String> open = new ArrayList<>();
+            root.path("open").forEach(item -> {
+                String line = item.asText("").strip();
+                if (!line.isEmpty()) {
+                    open.add(line);
+                }
+            });
+            if (summary.isEmpty() && open.isEmpty()) {
+                log.debug("Session {}: nothing worth summarising", fresh.id());
+                return Optional.empty();
+            }
+            String text = open.isEmpty() ? summary : summary + "\nНезакрытое: " + String.join("; ", open);
+            memory.saveSummary(fresh.id(), text);
+            return Optional.of(text);
+        } catch (LlmException e) {
+            log.warn("Cannot summarise session {}: {}", fresh.id(), e.getMessage());
+            return Optional.empty();
+        } catch (RuntimeException e) {
+            log.error("Error summarising session {}", fresh.id(), e);
+            return Optional.empty();
+        }
     }
 
     public AgentReply resolve(String token, boolean sameAsCandidate) {

@@ -20,10 +20,17 @@ import java.util.regex.Pattern;
  * facts and wasteful with a few hundred: the prompt grows with the size of memory rather than
  * with the question, and the useful line ends up buried among the irrelevant ones.
  *
- * <p>The ranking is deliberately lexical and cheap -- word overlap with the message plus a
- * recency bonus, no model call and no embeddings. It decides <b>order and cut-off</b>, not
- * truth: a fact that scores nothing is not wrong, it is merely last. Real semantic recall
- * ("that tall guy from the meeting") needs vectors and is still in the backlog.
+ * <p>The ranking is deliberately lexical and cheap -- word overlap with the message, a recency
+ * bonus and what the fact has earned by being confirmed and used, no model call and no
+ * embeddings. It decides <b>order and cut-off</b>, not truth: a fact that scores nothing is not
+ * wrong, it is merely last. Real semantic recall ("that tall guy from the meeting") needs vectors
+ * and is still in the backlog.
+ *
+ * <p>Every signal here is a <b>bonus and never a penalty</b>, and that is deliberate. A fact is
+ * only ever marked used when it was shown to the model in the first place, so docking points for
+ * "never used" would push a fact that was never offered further out of sight on every turn, and
+ * it could never earn its way back. Useful facts rise; the rest keep the place the words gave
+ * them.
  */
 final class FactRelevance {
 
@@ -43,6 +50,14 @@ final class FactRelevance {
 
     /** Anything newer than this is fresh enough to be worth showing on its own. */
     private static final Duration RECENT = Duration.ofDays(14);
+
+    /** Per repeated confirmation by extraction, and how many of them still count. */
+    private static final double PER_CONFIRMATION = 0.5;
+    private static final int CONFIRMATIONS_COUNTED = 3;
+
+    /** Per time the model said it leaned on the fact, and how many of them still count. */
+    private static final double PER_USE = 0.5;
+    private static final int USES_COUNTED = 4;
 
     private FactRelevance() {
     }
@@ -96,6 +111,14 @@ final class FactRelevance {
         if (fact.category() == FactCategory.PROCEDURE) {
             score += 2.0;
         }
+
+        // Heard again, and again: extraction ran into the same thing on a later tail. Cheap,
+        // honest evidence that this is part of the user's life rather than something said once.
+        score += Math.min(fact.mentionCount() - 1, CONFIRMATIONS_COUNTED) * PER_CONFIRMATION;
+
+        // Actually leaned on when answering. The only signal that comes from the memory having
+        // worked rather than from guessing which words look relevant.
+        score += Math.min(fact.usedCount(), USES_COUNTED) * PER_USE;
 
         Instant created = fact.createdAt();
         if (created != null) {

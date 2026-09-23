@@ -1,6 +1,7 @@
 package com.bebebe.agent.core;
 
 import com.bebebe.agent.memory.DialogMessage;
+import com.bebebe.agent.memory.DialogSession;
 import com.bebebe.agent.memory.Entity;
 import com.bebebe.agent.memory.Fact;
 import com.bebebe.agent.memory.FactCategory;
@@ -40,7 +41,8 @@ public final class MemoryProtocol {
                 "category", Map.of("type", "string",
                         "enum", java.util.Arrays.stream(FactCategory.values()).map(FactCategory::wireName).toList()),
                 "date", Map.of("type", "string"),
-                "entities", Map.of("type", "array", "items", Map.of("type", "string"))));
+                "entities", Map.of("type", "array", "items", Map.of("type", "string")),
+                "replaces", Map.of("type", "array", "items", Map.of("type", "integer"))));
         fact.put("required", List.of("text", "category", "entities"));
         fact.put("additionalProperties", false);
 
@@ -105,6 +107,14 @@ public final class MemoryProtocol {
                   * paths, project names, addresses, accounts they mention in passing;
                   * plans and intentions: what they are going to do, what they are waiting for.
 
+                replaces -- the numbers of already known facts that this one makes obsolete. Use it
+                when what you are writing CONTRADICTS or SUPERSEDES something in the list of known
+                facts below: moved to another city, changed jobs, quit smoking, an agreement moved
+                to another day. The old fact is not deleted -- it stops being current, and the
+                history of what was true and when stays readable. Do NOT use replaces for a detail
+                that merely adds to the old fact: "любит чай" and "любит чай без сахара" are both
+                true, and the second one alone would lose the first.
+
                 Do not record: one-off questions ("how much disk space"), retellings of the agent's
                 answers, weather, pleasantries. If there is nothing to remember, both arrays are empty.
                 When in doubt whether something is worth remembering -- write it down. A fact nobody
@@ -114,6 +124,16 @@ public final class MemoryProtocol {
     }
 
     public static String extractionUserPrompt(List<Entity> known, List<DialogMessage> messages) {
+        return extractionUserPrompt(known, List.of(), messages);
+    }
+
+    /**
+     * @param knownFacts what is already remembered around this conversation. Without it the model
+     *                   cannot mark anything as replaced -- it would be contradicting facts it has
+     *                   never seen -- and contradictions simply piled up next to each other.
+     */
+    public static String extractionUserPrompt(List<Entity> known, List<Fact> knownFacts,
+                                              List<DialogMessage> messages) {
         StringBuilder sb = new StringBuilder();
         sb.append("Today: ").append(java.time.LocalDate.now()).append("\n\n");
 
@@ -123,6 +143,15 @@ public final class MemoryProtocol {
             sb.append("Known people:\n");
             for (Entity entity : known) {
                 sb.append("  ").append(entity.describeForModel()).append('\n');
+            }
+            sb.append('\n');
+        }
+
+        if (!knownFacts.isEmpty()) {
+            sb.append("Already remembered (use the numbers in \"replaces\" when something below "
+                    + "is made obsolete by the conversation):\n");
+            for (Fact fact : knownFacts) {
+                sb.append("  ").append(fact.describeForModel()).append('\n');
             }
             sb.append('\n');
         }
@@ -140,6 +169,23 @@ public final class MemoryProtocol {
                                       List<Fact> aboutUser,
                                       List<Fact> procedures,
                                       List<Fact> recalled) {
+        return contextBlock(mentioned, factsByEntity, aboutUser, procedures, recalled, List.of());
+    }
+
+    /**
+     * Everything remembered that is worth showing for this one message.
+     *
+     * <p>Each fact carries its number, and the block ends by asking for those numbers back. That
+     * is the whole of the feedback loop: until the model said which facts it had leaned on, there
+     * was no way to tell a fact that earns its place in the prompt from one that has been riding
+     * along unread for months, and the ranking weights were guesses that nothing could check.
+     */
+    public static String contextBlock(List<Entity> mentioned,
+                                      Map<Entity, List<Fact>> factsByEntity,
+                                      List<Fact> aboutUser,
+                                      List<Fact> procedures,
+                                      List<Fact> recalled,
+                                      List<DialogSession> episodes) {
         StringBuilder sb = new StringBuilder();
 
         if (!mentioned.isEmpty()) {
@@ -180,8 +226,71 @@ public final class MemoryProtocol {
             }
         }
 
+        if (!episodes.isEmpty()) {
+
+            // What is left of conversations that are over. Their logs stopped being context when
+            // they closed, and without this the agent's world began with the current session.
+            sb.append("\nRecent conversations (already finished):\n");
+            for (DialogSession episode : episodes) {
+                sb.append("  ").append(describeEpisode(episode)).append('\n');
+            }
+        }
+
         if (sb.length() > 0) {
-            sb.append("\nUse this when appropriate; do not retell it needlessly.\n");
+            sb.append("\nUse this when appropriate; do not retell it needlessly. The #N numbers are "
+                    + "internal: never show them to the user, but list in \"used_facts\" the numbers "
+                    + "of the facts you actually relied on for your answer.\n");
+        }
+        return sb.toString();
+    }
+
+    private static String describeEpisode(DialogSession session) {
+        String when = session.endedAt() == null ? "" : session.endedAt().toString().substring(0, 10) + ": ";
+        return "• " + when + session.summary().replace("\n", " / ");
+    }
+
+    /**
+     * What a finished conversation leaves behind.
+     *
+     * <p>Kept deliberately short. This is not a transcript -- the transcript is still in the
+     * database and can be read by hand. It is what the agent should carry into next week: what was
+     * discussed and what was left hanging, so that "мы же вчера про это говорили" has an answer
+     * and a dropped thread can be picked up instead of quietly disappearing.
+     */
+    public static Map<String, Object> summarySchema() {
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "object");
+        schema.put("properties", Map.of(
+                "summary", Map.of("type", "string"),
+                "open", Map.of("type", "array", "items", Map.of("type", "string"))));
+        schema.put("required", List.of("summary"));
+        schema.put("additionalProperties", false);
+        return schema;
+    }
+
+    public static String summarySystemPrompt() {
+        return """
+                You are the memory module of a personal agent. A conversation between the user and
+                the agent has ended. Write down what is worth carrying forward, and answer ONLY
+                with JSON:
+                {"summary": "2-4 sentences: what the conversation was about and what came of it",
+                 "open": ["what was left unfinished, one line each"]}
+
+                summary -- in Russian, in the third person, concrete: what the user wanted, what was
+                done, how it ended. Names, paths and numbers that came up are worth keeping; small
+                talk is not. Do not retell the dialogue turn by turn and do not repeat facts that
+                belong in long-term memory ("Сашу зовут Саша") -- those are extracted separately.
+                open -- only what genuinely hangs: a promise not yet kept, a question left
+                unanswered, work interrupted halfway. An empty array when the conversation is closed.
+                If there is nothing worth remembering at all, summary is an empty string.
+                """;
+    }
+
+    public static String summaryUserPrompt(List<DialogMessage> messages) {
+        StringBuilder sb = new StringBuilder("Conversation:\n");
+        for (DialogMessage message : messages) {
+            sb.append(message.role() == com.bebebe.agent.memory.MessageRole.USER ? "User: " : "Agent: ")
+                    .append(message.text().strip()).append('\n');
         }
         return sb.toString();
     }

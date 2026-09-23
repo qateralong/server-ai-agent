@@ -94,7 +94,45 @@ public final class MemoryStore implements AutoCloseable {
                         PRIMARY KEY (fact_id, entity_id)
                     )""");
             s.executeUpdate("CREATE INDEX IF NOT EXISTS idx_fact_entities_entity ON fact_entities(entity_id)");
+
+            // Added later, so they are added to whatever is already on disk rather than to the
+            // CREATE above: an existing memory must survive the upgrade untouched.
+            addColumn(s, "facts", "superseded_by", "INTEGER");
+            addColumn(s, "facts", "superseded_at", "TEXT");
+            addColumn(s, "facts", "mention_count", "INTEGER NOT NULL DEFAULT 1");
+            addColumn(s, "facts", "used_count", "INTEGER NOT NULL DEFAULT 0");
+            addColumn(s, "facts", "last_used_at", "TEXT");
+            addColumn(s, "sessions", "summary", "TEXT NOT NULL DEFAULT ''");
+            s.executeUpdate("CREATE INDEX IF NOT EXISTS idx_facts_current ON facts(superseded_at, id)");
         }
+    }
+
+    /** SQLite has no ADD COLUMN IF NOT EXISTS, so the existing columns are read first. */
+    private void addColumn(Statement s, String table, String column, String type) throws SQLException {
+        try (ResultSet rs = s.executeQuery("PRAGMA table_info(" + table + ")")) {
+            while (rs.next()) {
+                if (column.equalsIgnoreCase(rs.getString("name"))) {
+                    return;
+                }
+            }
+        }
+        s.executeUpdate("ALTER TABLE " + table + " ADD COLUMN " + column + " " + type);
+        log.info("Memory schema: column {}.{} added", table, column);
+    }
+
+    /**
+     * Told about every session that has just been closed -- by idle, by the switch-off hook or by
+     * hand. It exists because closing is where a conversation has to be turned into something that
+     * outlives it (its tail consolidated, its summary written), and that needs a model, which this
+     * module knows nothing about.
+     *
+     * <p>Called while the store is locked, so an implementation must hand the work to another
+     * thread and return.
+     */
+    private volatile java.util.function.Consumer<DialogSession> sessionClosed = session -> { };
+
+    public void setSessionClosedListener(java.util.function.Consumer<DialogSession> listener) {
+        this.sessionClosed = listener == null ? session -> { } : listener;
     }
 
     public synchronized DialogSession openOrContinue(String conversationKey) {
@@ -168,9 +206,53 @@ public final class MemoryStore implements AutoCloseable {
                 "UPDATE sessions SET ended_at = ? WHERE id = ? AND ended_at IS NULL")) {
             ps.setString(1, Instant.now().toString());
             ps.setLong(2, sessionId);
-            ps.executeUpdate();
+            if (ps.executeUpdate() == 0) {
+
+                // Already closed: two paths raced (idle close and the switch-off hook). Telling
+                // the listener a second time would summarise the same conversation twice.
+                return;
+            }
         } catch (SQLException e) {
             throw new MemoryException("Cannot close session " + sessionId, e);
+        }
+        session(sessionId).ifPresent(closed -> {
+            try {
+                sessionClosed.accept(closed);
+            } catch (RuntimeException e) {
+                log.error("Session-closed listener failed for {}", sessionId, e);
+            }
+        });
+    }
+
+    public synchronized void saveSummary(long sessionId, String summary) {
+        try (PreparedStatement ps = connection.prepareStatement(
+                "UPDATE sessions SET summary = ? WHERE id = ?")) {
+            ps.setString(1, summary == null ? "" : summary.strip());
+            ps.setLong(2, sessionId);
+            ps.executeUpdate();
+            log.atInfo()
+                    .addKeyValue("event", "memory.summary")
+                    .addKeyValue("session_id", sessionId)
+                    .addKeyValue("length", summary == null ? 0 : summary.length())
+                    .log("Summary of session {} saved", sessionId);
+        } catch (SQLException e) {
+            throw new MemoryException("Cannot save the summary of session " + sessionId, e);
+        }
+    }
+
+    /**
+     * The last conversations that are over and have something to say about themselves, newest
+     * first. This is the whole of episodic memory: what has been talked about and when.
+     */
+    public synchronized List<DialogSession> recentSummaries(int limit) {
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT * FROM sessions
+                WHERE ended_at IS NOT NULL AND summary <> ''
+                ORDER BY id DESC LIMIT ?""")) {
+            ps.setInt(1, Math.max(1, limit));
+            return readSessions(ps);
+        } catch (SQLException e) {
+            throw new MemoryException("Cannot read session summaries", e);
         }
     }
 
@@ -402,7 +484,7 @@ public final class MemoryStore implements AutoCloseable {
         try (PreparedStatement ps = connection.prepareStatement("""
                 SELECT f.* FROM facts f
                 JOIN fact_entities fe ON fe.fact_id = f.id
-                WHERE fe.entity_id = ?
+                WHERE fe.entity_id = ? AND f.superseded_at IS NULL
                 ORDER BY f.fact_date IS NULL, f.fact_date DESC, f.id DESC""")) {
             ps.setLong(1, entityId);
             return readFacts(ps);
@@ -414,7 +496,7 @@ public final class MemoryStore implements AutoCloseable {
     public synchronized List<Fact> factsAboutUser() {
         try (PreparedStatement ps = connection.prepareStatement("""
                 SELECT f.* FROM facts f
-                WHERE f.id NOT IN (SELECT fact_id FROM fact_entities)
+                WHERE f.id NOT IN (SELECT fact_id FROM fact_entities) AND f.superseded_at IS NULL
                 ORDER BY f.id DESC""")) {
             return readFacts(ps);
         } catch (SQLException e) {
@@ -431,7 +513,7 @@ public final class MemoryStore implements AutoCloseable {
      */
     public synchronized List<Fact> allFacts(int limit) {
         try (PreparedStatement ps = connection.prepareStatement(
-                "SELECT * FROM facts ORDER BY id DESC LIMIT ?")) {
+                "SELECT * FROM facts WHERE superseded_at IS NULL ORDER BY id DESC LIMIT ?")) {
             ps.setInt(1, Math.max(1, limit));
             return readFacts(ps);
         } catch (SQLException e) {
@@ -441,11 +523,100 @@ public final class MemoryStore implements AutoCloseable {
 
     public synchronized List<Fact> factsByCategory(FactCategory category) {
         try (PreparedStatement ps = connection.prepareStatement(
-                "SELECT * FROM facts WHERE category = ? ORDER BY id DESC")) {
+                "SELECT * FROM facts WHERE category = ? AND superseded_at IS NULL ORDER BY id DESC")) {
             ps.setString(1, category.wireName());
             return readFacts(ps);
         } catch (SQLException e) {
             throw new MemoryException("Cannot read facts of category " + category, e);
+        }
+    }
+
+    /**
+     * The fact is no longer current: either a newer one took its place, or the user said it was
+     * wrong. Not a delete -- what was believed, and until when, stays on record, and a mistaken
+     * correction can be undone by hand.
+     *
+     * @param replacedBy the fact that supersedes this one, or null when it was simply retracted
+     * @return false when there is no such fact, or it was already superseded
+     */
+    public synchronized boolean supersede(long id, Long replacedBy, String reason) {
+        if (replacedBy != null && replacedBy == id) {
+            return false;
+        }
+        try (PreparedStatement ps = connection.prepareStatement(
+                "UPDATE facts SET superseded_at = ?, superseded_by = ? WHERE id = ? AND superseded_at IS NULL")) {
+            ps.setString(1, Instant.now().toString());
+            if (replacedBy == null) {
+                ps.setNull(2, java.sql.Types.INTEGER);
+            } else {
+                ps.setLong(2, replacedBy);
+            }
+            ps.setLong(3, id);
+            if (ps.executeUpdate() == 0) {
+                return false;
+            }
+            log.atInfo()
+                    .addKeyValue("event", "memory.superseded")
+                    .addKeyValue("fact_id", id)
+                    .addKeyValue("replaced_by", replacedBy == null ? "" : replacedBy.toString())
+                    .addKeyValue("reason", reason == null ? "" : reason)
+                    .log("Fact {} is no longer current{}", id,
+                            replacedBy == null ? " (retracted)" : " (replaced by #" + replacedBy + ")");
+            return true;
+        } catch (SQLException e) {
+            throw new MemoryException("Cannot supersede fact " + id, e);
+        }
+    }
+
+    /**
+     * The same thing has been heard again. Extraction runs on overlapping tails, so a repeat used
+     * to be dropped as a duplicate and counted nowhere -- and a fact confirmed five times looked
+     * exactly like one mentioned once in passing.
+     */
+    public synchronized void confirmFact(long id) {
+        try (PreparedStatement ps = connection.prepareStatement(
+                "UPDATE facts SET mention_count = mention_count + 1 WHERE id = ?")) {
+            ps.setLong(1, id);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new MemoryException("Cannot count a mention of fact " + id, e);
+        }
+    }
+
+    /**
+     * The model said it leaned on these facts when answering. The only signal about recall that
+     * does not come from guessing which words look relevant.
+     */
+    public synchronized int markUsed(java.util.Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return 0;
+        }
+        String now = Instant.now().toString();
+        try (PreparedStatement ps = connection.prepareStatement(
+                "UPDATE facts SET used_count = used_count + 1, last_used_at = ? WHERE id = ?")) {
+            int touched = 0;
+            for (Long id : ids) {
+                if (id == null) {
+                    continue;
+                }
+                ps.setString(1, now);
+                ps.setLong(2, id);
+                touched += ps.executeUpdate();
+            }
+            return touched;
+        } catch (SQLException e) {
+            throw new MemoryException("Cannot mark facts as used", e);
+        }
+    }
+
+    /** What is no longer current, newest first -- for diagnostics and for undoing a mistake. */
+    public synchronized List<Fact> supersededFacts(int limit) {
+        try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT * FROM facts WHERE superseded_at IS NOT NULL ORDER BY id DESC LIMIT ?")) {
+            ps.setInt(1, Math.max(1, limit));
+            return readFacts(ps);
+        } catch (SQLException e) {
+            throw new MemoryException("Cannot read superseded facts", e);
         }
     }
 
@@ -515,8 +686,15 @@ public final class MemoryStore implements AutoCloseable {
         return count("entities");
     }
 
+    /** Only what is still believed: superseded facts stay on disk but are not "what I know". */
     public synchronized int countFacts() {
-        return count("facts");
+        try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT COUNT(*) FROM facts WHERE superseded_at IS NULL");
+             ResultSet rs = ps.executeQuery()) {
+            return rs.next() ? rs.getInt(1) : 0;
+        } catch (SQLException e) {
+            throw new MemoryException("Cannot count facts", e);
+        }
     }
 
     public synchronized int countMessages() {
@@ -540,7 +718,8 @@ public final class MemoryStore implements AutoCloseable {
                 Instant.parse(rs.getString("started_at")),
                 Instant.parse(rs.getString("last_message_at")),
                 ended == null ? null : Instant.parse(ended),
-                rs.getLong("consolidated_up_to"));
+                rs.getLong("consolidated_up_to"),
+                rs.getString("summary"));
     }
 
     private List<DialogSession> readSessions(PreparedStatement ps) throws SQLException {
@@ -585,6 +764,10 @@ public final class MemoryStore implements AutoCloseable {
         String date = rs.getString("fact_date");
         long source = rs.getLong("source_message_id");
         boolean sourceNull = rs.wasNull();
+        long replacedBy = rs.getLong("superseded_by");
+        boolean replacedByNull = rs.wasNull();
+        String supersededAt = rs.getString("superseded_at");
+        String lastUsed = rs.getString("last_used_at");
         return new Fact(
                 id,
                 rs.getString("text"),
@@ -592,7 +775,12 @@ public final class MemoryStore implements AutoCloseable {
                 date == null ? null : LocalDate.parse(date),
                 sourceNull ? null : source,
                 entityIdsOf(id),
-                Instant.parse(rs.getString("created_at")));
+                Instant.parse(rs.getString("created_at")),
+                replacedByNull ? null : replacedBy,
+                supersededAt == null ? null : Instant.parse(supersededAt),
+                rs.getInt("mention_count"),
+                rs.getInt("used_count"),
+                lastUsed == null ? null : Instant.parse(lastUsed));
     }
 
     private List<Fact> readFacts(PreparedStatement ps) throws SQLException {

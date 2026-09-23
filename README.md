@@ -12,7 +12,10 @@ The model is Ollama (cloud or a local daemon) or Claude, switchable on the fly.
 * **Voice** — a voice message you send is recognised locally (whisper.cpp), and
   the agent can answer with voice too (Piper).
 * **Memory** — remembers people and facts about them, and takes them into
-  account in later conversations.
+  account in later conversations. It can be asked to remember something on the
+  spot, corrected when it got something wrong, and it keeps a few lines about
+  every conversation that has ended, so "what did we discuss yesterday?" has an
+  answer.
 * **Notes and lists** — plain markdown files, they open in Obsidian.
 * **Reminders** — "remind me tomorrow at 9", with repeats; missed ones are
   caught up.

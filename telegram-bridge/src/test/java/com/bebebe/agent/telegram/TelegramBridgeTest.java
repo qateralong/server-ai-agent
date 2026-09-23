@@ -113,6 +113,22 @@ class TelegramBridgeTest {
                 .formatted(updateIds.getAndIncrement(), updateIds.get(), username, CHAT, fileName, mimeType));
     }
 
+    private boolean awaitAgentCalls(int count) {
+        long deadline = System.nanoTime() + WAIT.toNanos();
+        while (System.nanoTime() < deadline) {
+            if (agentCalls.size() >= count) {
+                return true;
+            }
+            try {
+                Thread.sleep(20);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return false;
+    }
+
     private void sendPhoto(String caption, String username) {
         stub.enqueue("""
                 {"update_id":%d,"message":{"message_id":%d,"date":0,
@@ -195,7 +211,10 @@ class TelegramBridgeTest {
         assertTrue(stub.awaitCalls("downloadFile", 1, WAIT), "the photo was not downloaded");
         assertEquals("big", stub.calls("getFile").getFirst().path("file_id").asText(),
                 "the largest size is the one worth looking at");
-        assertEquals(1, agentCalls.size());
+
+        // The download finishing is not the agent being asked: between the two the bridge still
+        // turns on the typing indicator, which is a round trip of its own.
+        assertTrue(awaitAgentCalls(1), "the agent was not asked about the photo");
         UserMessage seen = agentCalls.getFirst();
         assertEquals(MessageSource.IMAGE, seen.source());
         assertEquals("что тут не так?", seen.text(), "the caption is the question");
@@ -213,6 +232,7 @@ class TelegramBridgeTest {
         sendPhoto(null, ALLOWED);
 
         assertTrue(stub.awaitCalls("downloadFile", 1, WAIT));
+        assertTrue(awaitAgentCalls(1), "the agent was not asked about the photo");
         assertFalse(agentCalls.getFirst().text().isBlank(),
                 "without a caption the agent still has to be asked something");
         assertTrue(agentCalls.getFirst().hasImages());

@@ -5,7 +5,6 @@ import com.bebebe.agent.memory.DialogMessage;
 import com.bebebe.agent.memory.DialogSession;
 import com.bebebe.agent.memory.Entity;
 import com.bebebe.agent.memory.Fact;
-import com.bebebe.agent.memory.FactCategory;
 import com.bebebe.agent.memory.MemoryStore;
 import com.bebebe.agent.memory.MessageRole;
 import com.bebebe.agent.llm.LlmException;
@@ -31,7 +30,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -56,7 +54,7 @@ public final class AgentCore {
     private final ScriptLibrary library;
     private final MemoryStore memory;
     private final MemoryConsolidator consolidator;
-    private final EntityResolver entityResolver;
+    private final MemoryRecall recall;
     private final ToolRegistry tools;
     private final ReminderService reminders;
     private final PeriodicConsolidation sweeper = new PeriodicConsolidation();
@@ -120,7 +118,19 @@ public final class AgentCore {
         this.memory = memory;
         this.tools = tools;
         this.consolidator = new MemoryConsolidator(memory, () -> llm);
-        this.entityResolver = new EntityResolver(memory);
+        this.recall = new MemoryRecall(memory);
+
+        // Recall stops being a single guess made before the model has said anything: when the
+        // keyword pre-load misses, the model can ask for what it half-remembers, write something
+        // down the moment it is asked to, and retract what turned out to be wrong.
+        CoreMemoryAccess access = new CoreMemoryAccess(memory, recall, clock);
+        tools.register(new com.bebebe.agent.tools.memory.RecallTool(access));
+        tools.register(new com.bebebe.agent.tools.memory.RememberTool(access));
+        tools.register(new com.bebebe.agent.tools.memory.ForgetTool(access));
+
+        // A conversation that ends has to leave something behind, and closing it is the only
+        // moment when that is possible: the store itself knows nothing about the model.
+        memory.setSessionClosedListener(closed -> sweeper.submit(() -> closeOut(closed)));
         this.budgetLimit = budgetLimit;
         this.activity = new ActivityMonitor();
         this.worker = new AgentWorker(activity);
@@ -673,7 +683,9 @@ public final class AgentCore {
                     candidates.stream().map(ScriptEntry::displayName).toList());
         }
 
-        String memoryBlock = memoryContext(message);
+        MemoryRecall.Selection remembered = recall.select(message.text(), clock.instant());
+        logRecall(remembered);
+        String memoryBlock = remembered.block();
         List<LlmMessage> history = historyOf(session);
 
         budget.spend("request decision");
@@ -687,9 +699,11 @@ public final class AgentCore {
                 + (live() ? DecisionProtocol.liveRepliesBlock() : "") + personaBlock();
         // The picture goes with the decision call and only with it: it is context for this one
         // question, not something the agent keeps or builds a script out of.
-        LlmResponse response = askStructured(system, history, userBlock, scripts, message.images());
+        boolean offeredFacts = !remembered.offered().isEmpty();
+        LlmResponse response = askStructured(system, history, userBlock, scripts, message.images(), offeredFacts);
 
         AgentDecision decision = AgentDecision.parse(response.text(), MAPPER);
+        noteUsedFacts(decision, remembered);
         if (!scripts && (decision.type().isScript() || !decision.isUsable())) {
 
             log.atWarn().addKeyValue("event", "decision.scripts_disabled").addKeyValue("type", decision.type().name())
@@ -701,7 +715,7 @@ public final class AgentCore {
             // One reminder of the format, and only then give up. Before this the loop went
             // straight to "не разобрался" -- and any path that instead forwarded the raw text
             // put the protocol JSON in front of the user.
-            decision = retryWithFormatReminder(system, history, userBlock, response.text(), budget);
+            decision = retryWithFormatReminder(system, history, userBlock, response.text(), budget, offeredFacts);
         }
         log.atInfo()
                 .addKeyValue("event", "decision")
@@ -724,7 +738,7 @@ public final class AgentCore {
      */
     private AgentDecision retryWithFormatReminder(String system, List<LlmMessage> history,
                                                   String userBlock, String rawAnswer,
-                                                  RequestBudget budget) {
+                                                  RequestBudget budget, boolean memoryFacts) {
         log.atWarn()
                 .addKeyValue("event", "decision.unparsed")
                 .addKeyValue("answer", rawAnswer)
@@ -735,7 +749,8 @@ public final class AgentCore {
             return AgentDecision.unknown();
         }
         LlmResponse retry = askStructured(system, history,
-                userBlock + "\n\n" + DecisionProtocol.formatReminderPrompt(rawAnswer), true);
+                userBlock + "\n\n" + DecisionProtocol.formatReminderPrompt(rawAnswer), true,
+                List.of(), memoryFacts);
         AgentDecision second = AgentDecision.parse(retry.text(), MAPPER);
         if (second.isUsable()) {
             log.atInfo().addKeyValue("event", "decision.reparsed")
@@ -783,13 +798,13 @@ public final class AgentCore {
     }
 
     private LlmResponse askStructured(String system, List<LlmMessage> history, String user, boolean scripts) {
-        return askStructured(system, history, user, scripts, List.of());
+        return askStructured(system, history, user, scripts, List.of(), false);
     }
 
     private LlmResponse askStructured(String system, List<LlmMessage> history, String user, boolean scripts,
-                                      List<com.bebebe.agent.llm.LlmImage> images) {
+                                      List<com.bebebe.agent.llm.LlmImage> images, boolean memoryFacts) {
         LlmRequest request = new LlmRequest(system, history, user, null,
-                DecisionProtocol.responseSchema(tools, live(), scripts), images);
+                DecisionProtocol.responseSchema(tools, live(), scripts, memoryFacts), images);
         return askBusy(() -> provider().chat(request));
     }
 
@@ -904,64 +919,86 @@ public final class AgentCore {
         return history;
     }
 
-    /**
-     * How many facts of one kind may reach the prompt. Past this the ranking decides; the rest
-     * stays in the database and is still visible in 🧠 Memory -- it is dropped from one prompt,
-     * not forgotten.
-     */
-    static final int FACTS_PER_ENTITY = 8;
-
-    static final int FACTS_ABOUT_USER = 10;
-
-    static final int PROCEDURES = 12;
-
-    /** How many facts keyword recall may add on top of the blocks above. */
-    static final int RECALL_LIMIT = 6;
-
-    /** How far back recall looks. Beyond this the lexical scan stops paying for itself. */
-    static final int RECALL_SCANNED = 500;
-
-    private String memoryContext(UserMessage message) {
-        List<Entity> mentioned = entityResolver.resolve(message.text());
-        java.time.Instant now = clock.instant();
-        Map<Entity, List<Fact>> facts = new LinkedHashMap<>();
-        for (Entity entity : mentioned) {
-            facts.put(entity, FactRelevance.pick(
-                    memory.factsOf(entity.id()), message.text(), now, FACTS_PER_ENTITY));
-        }
-        if (!mentioned.isEmpty()) {
+    private void logRecall(MemoryRecall.Selection selection) {
+        if (!selection.mentioned().isEmpty()) {
             log.atInfo()
                     .addKeyValue("event", "memory.resolved")
-                    .addKeyValue("entities", mentioned.stream().map(Entity::canonicalName).toList().toString())
-                    .log("Mentioned: {}", mentioned.stream().map(Entity::canonicalName).toList());
+                    .addKeyValue("entities", selection.mentioned().stream()
+                            .map(Entity::canonicalName).toList().toString())
+                    .log("Mentioned: {}", selection.mentioned().stream().map(Entity::canonicalName).toList());
         }
-        List<Fact> aboutUser = FactRelevance.pick(
-                memory.factsAboutUser(), message.text(), now, FACTS_ABOUT_USER);
-        List<Fact> procedures = FactRelevance.pick(
-                memory.factsByCategory(FactCategory.PROCEDURE), message.text(), now, PROCEDURES);
-
-        // Recall by keyword over everything else. Without it a fact reached the prompt only when
-        // the name of the person it is about literally appeared in the message, so «кто из
-        // знакомых вегетарианец?» found nothing although the fact was stored.
-        java.util.Set<Long> already = new java.util.HashSet<>();
-        facts.values().forEach(list -> list.forEach(f -> already.add(f.id())));
-        aboutUser.forEach(f -> already.add(f.id()));
-        procedures.forEach(f -> already.add(f.id()));
-
-        List<Fact> recalled = FactRelevance.matching(
-                        memory.allFacts(RECALL_SCANNED), message.text(), now, RECALL_LIMIT + already.size())
-                .stream()
-                .filter(f -> !already.contains(f.id()))
-                .limit(RECALL_LIMIT)
-                .toList();
-        if (!recalled.isEmpty()) {
+        if (!selection.recalled().isEmpty()) {
             log.atInfo()
                     .addKeyValue("event", "memory.recalled")
-                    .addKeyValue("count", recalled.size())
-                    .log("Recalled by keyword: {}", recalled.stream().map(Fact::text).toList());
+                    .addKeyValue("count", selection.recalled().size())
+                    .log("Recalled by keyword: {}", selection.recalled().stream().map(Fact::text).toList());
         }
+        if (!selection.episodes().isEmpty()) {
+            log.atDebug()
+                    .addKeyValue("event", "memory.episodes")
+                    .addKeyValue("count", selection.episodes().size())
+                    .log("Past conversations offered: {}", selection.episodes().size());
+        }
+    }
 
-        return MemoryProtocol.contextBlock(mentioned, facts, aboutUser, procedures, recalled);
+    /**
+     * Records which remembered facts the model says it used.
+     *
+     * <p>Only numbers that were actually shown this turn count. The model invents ids readily
+     * enough, and an invented one would teach the ranking that a fact nobody has read is the most
+     * useful thing in memory.
+     */
+    private void noteUsedFacts(AgentDecision decision, MemoryRecall.Selection offered) {
+        if (decision.usedFacts().isEmpty() || offered.offered().isEmpty()) {
+            return;
+        }
+        List<Long> real = decision.usedFacts().stream().filter(offered.offered()::contains).toList();
+        if (real.isEmpty()) {
+            log.atDebug().addKeyValue("event", "memory.used_unknown")
+                    .addKeyValue("claimed", decision.usedFacts().toString())
+                    .log("The model named facts it was not shown -- ignored");
+            return;
+        }
+        memory.markUsed(real);
+        log.atInfo()
+                .addKeyValue("event", "memory.used")
+                .addKeyValue("facts", real.toString())
+                .addKeyValue("offered", offered.offered().size())
+                .log("The answer leaned on {} of the {} facts offered", real.size(), offered.offered().size());
+    }
+
+    /**
+     * Everything a finished conversation still owes: its tail extracted, and a summary of itself.
+     *
+     * <p>Runs off the worker thread, because closing happens while the user is waiting for the
+     * first answer of the <i>next</i> conversation and neither of these is worth making them wait
+     * for. The tail matters more than it looks: a session closed by idle used to take its
+     * unextracted tail with it, since the periodic sweep only ever looks at sessions that are
+     * still open.
+     */
+    private void closeOut(DialogSession session) {
+        if (!agentSwitch.isOn()) {
+
+            // Switched off: the stop hook has already extracted and summarised this session by
+            // hand, on the thread that could still be sure of finishing.
+            return;
+        }
+        try (TraceContext.Scope ignored = TraceContext.open("mem-" + session.id())) {
+            DialogSession fresh = memory.session(session.id()).orElse(session);
+            if (fresh.hasSummary()) {
+                return;
+            }
+            if (!memory.unconsolidated(fresh).isEmpty()) {
+                deliverQuestions(consolidator.consolidate(fresh), fresh.conversationKey());
+            }
+            consolidator.summarize(fresh).ifPresent(summary ->
+                    log.atInfo()
+                            .addKeyValue("event", "memory.episode")
+                            .addKeyValue("session_id", fresh.id())
+                            .log("Session {} closed: {}", fresh.id(), summary.replace("\n", " / ")));
+        } catch (RuntimeException e) {
+            log.error("Could not close out session {}", session.id(), e);
+        }
     }
 
     /**
@@ -983,6 +1020,19 @@ public final class AgentCore {
                 });
 
         private java.util.concurrent.ScheduledFuture<?> ticking;
+
+        /**
+         * Background memory work that is not on a timer -- closing a session out. Shares this
+         * thread on purpose: consolidation of one session must not run twice at once, and one
+         * queue is the simplest way to guarantee it.
+         */
+        void submit(Runnable task) {
+            try {
+                timer.execute(task);
+            } catch (java.util.concurrent.RejectedExecutionException e) {
+                log.debug("Memory work rejected: the agent is shutting down");
+            }
+        }
 
         synchronized void start(java.time.Duration every) {
             if (every.isZero() || ticking != null) {
@@ -1060,6 +1110,10 @@ public final class AgentCore {
             for (DialogSession session : memory.activeSessions()) {
                 try (TraceContext.Scope ignored = TraceContext.open("mem-" + session.id())) {
                     deliverQuestions(consolidator.consolidate(session), session.conversationKey());
+
+                    // Synchronously, and before the session is closed: the listener that normally
+                    // does this hands the work to a thread that is about to be shut down.
+                    consolidator.summarize(session);
                     memory.endSession(session.id());
                     log.info("Session {} ({}) consolidated and closed",
                             session.id(), session.conversationKey());

@@ -21,6 +21,17 @@ public final class DecisionProtocol {
     }
 
     public static Map<String, Object> responseSchema(ToolRegistry tools, boolean liveReplies, boolean scripts) {
+        return responseSchema(tools, liveReplies, scripts, false);
+    }
+
+    /**
+     * @param memoryFacts whether remembered facts were put in front of the model this turn. Only
+     *                    then does the schema offer {@code used_facts}: a field the model cannot
+     *                    fill honestly when it was shown nothing is a field it will fill anyway,
+     *                    and the ranking would learn from invented numbers.
+     */
+    public static Map<String, Object> responseSchema(ToolRegistry tools, boolean liveReplies, boolean scripts,
+                                                     boolean memoryFacts) {
         Map<String, Object> properties = new LinkedHashMap<>();
         properties.put("type", Map.of(
                 "type", "string",
@@ -47,6 +58,10 @@ public final class DecisionProtocol {
         properties.put("tool_name", toolName);
 
         properties.put("arguments", Map.of("type", "object"));
+
+        if (memoryFacts) {
+            properties.put("used_facts", Map.of("type", "array", "items", Map.of("type", "integer")));
+        }
 
         Map<String, Object> schema = new LinkedHashMap<>();
         schema.put("type", "object");

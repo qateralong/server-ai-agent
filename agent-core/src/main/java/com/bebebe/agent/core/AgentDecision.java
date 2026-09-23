@@ -18,10 +18,21 @@ public record AgentDecision(
         String scriptName,
         List<String> scriptTags,
         String toolName,
-        Map<String, Object> arguments
+        Map<String, Object> arguments,
+        List<Long> usedFacts
 ) {
 
+    /** Everything except the memory feedback, which most decisions carry nothing of. */
+    public AgentDecision(DecisionType type, String reply, List<String> messages, String pythonCode,
+                         String explanation, long scriptId, String scriptName, List<String> scriptTags,
+                         String toolName, Map<String, Object> arguments) {
+        this(type, reply, messages, pythonCode, explanation, scriptId, scriptName, scriptTags,
+                toolName, arguments, List.of());
+    }
+
     public AgentDecision {
+        usedFacts = usedFacts == null ? List.of() : usedFacts.stream()
+                .filter(id -> id != null && id > 0).distinct().toList();
         type = type == null ? DecisionType.UNKNOWN : type;
         messages = messages == null ? List.of() : messages.stream()
                 .filter(m -> m != null && !m.isBlank()).map(String::strip).toList();
@@ -100,10 +111,42 @@ public record AgentDecision(
                     stringAt(raw, "script_name"),
                     tagsAt(raw, "script_tags"),
                     stringAt(raw, "tool_name"),
-                    mapAt(raw, "arguments"));
+                    mapAt(raw, "arguments"),
+                    factIdsAt(raw, "used_facts"));
         } catch (IOException | RuntimeException e) {
             return unknown();
         }
+    }
+
+    /**
+     * Which remembered facts the model says it leaned on.
+     *
+     * <p>Tolerant like everything else here: the numbers arrive as integers, as strings, and as
+     * "#42" often enough to be worth handling rather than losing the signal.
+     */
+    private static List<Long> factIdsAt(Map<?, ?> raw, String key) {
+        Object value = raw.get(key);
+        if (!(value instanceof Iterable<?> items)) {
+            return List.of();
+        }
+        List<Long> ids = new java.util.ArrayList<>();
+        for (Object item : items) {
+            if (item instanceof Number number) {
+                ids.add(number.longValue());
+                continue;
+            }
+            if (item == null) {
+                continue;
+            }
+            try {
+                ids.add(Long.parseLong(item.toString().strip().replace("#", "")));
+            } catch (NumberFormatException ignored) {
+
+                // A model that answers "the one about Саша" instead of a number tells us nothing
+                // usable; the ranking simply gets no signal from this turn.
+            }
+        }
+        return ids;
     }
 
     static String stripFences(String json) {

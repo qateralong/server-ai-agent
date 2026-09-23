@@ -89,7 +89,7 @@ public final class MemoryScreens {
             for (int i = 0; i < shown.size(); i++) {
                 Fact fact = shown.get(i);
                 text.append(from + i + 1).append(". ")
-                        .append(TelegramApi.escapeHtml(fact.describeForModel().substring(2)))
+                        .append(TelegramApi.escapeHtml(fact.display()))
                         .append(" <i>[").append(fact.category().title()).append("]</i>\n");
             }
             text.append("\nThe bin with a number deletes the fact.");

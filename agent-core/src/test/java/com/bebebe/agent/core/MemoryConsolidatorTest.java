@@ -59,6 +59,78 @@ class MemoryConsolidatorTest {
         return memory.session(session.id()).orElseThrow();
     }
 
+    /**
+     * A contradiction used to be filed next to what it contradicted, and the model was left to
+     * work out which of two equally presented facts it was supposed to believe.
+     */
+    @Test
+    void aFactThatContradictsAKnownOneRetiresIt() {
+        Fact old = memory.addFact("Пользователь живёт в Казани", FactCategory.TRAIT, null, null, List.of());
+        stub.enqueue("""
+                {"entities":[],
+                 "facts":[{"text":"Пользователь живёт в Москве","category":"trait","date":"",
+                           "entities":[],"replaces":[%d]}]}""".formatted(old.id()));
+
+        consolidator.consolidate(sessionWith("я переехал в Москву"));
+
+        assertEquals(List.of("Пользователь живёт в Москве"),
+                memory.factsAboutUser().stream().map(Fact::text).toList());
+        assertFalse(memory.fact(old.id()).orElseThrow().isCurrent());
+        assertEquals(1, memory.supersededFacts(10).size(), "nothing is deleted");
+    }
+
+    /** The model happily names facts it was never shown; those numbers must do nothing. */
+    @Test
+    void anInventedReplacementNumberIsIgnored() {
+        Fact kept = memory.addFact("Пользователь живёт в Казани", FactCategory.TRAIT, null, null, List.of());
+        stub.enqueue("""
+                {"entities":[],
+                 "facts":[{"text":"Пользователь купил велосипед","category":"event","date":"",
+                           "entities":[],"replaces":[9999]}]}""");
+
+        consolidator.consolidate(sessionWith("купил велосипед"));
+
+        assertTrue(memory.fact(kept.id()).orElseThrow().isCurrent());
+        assertEquals(0, memory.supersededFacts(10).size());
+    }
+
+    /**
+     * Extraction runs on overlapping tails, so the same thing arrives again as a matter of course.
+     * It is not written twice -- but it is no longer thrown away unrecorded either.
+     */
+    @Test
+    void hearingTheSameFactAgainCountsAsAConfirmation() {
+        stub.enqueue("""
+                {"entities":[],
+                 "facts":[{"text":"Пользователь пьёт кофе без сахара","category":"preference",
+                           "date":"","entities":[]}]}""");
+        consolidator.consolidate(sessionWith("пью кофе без сахара"));
+        assertEquals(1, memory.factsAboutUser().size());
+
+        stub.enqueue("""
+                {"entities":[],
+                 "facts":[{"text":"Пользователь пьёт кофе без сахара","category":"preference",
+                           "date":"","entities":[]}]}""");
+        consolidator.consolidate(sessionWith("я же говорил, кофе без сахара"));
+
+        assertEquals(1, memory.factsAboutUser().size(), "still one fact");
+        assertEquals(2, memory.factsAboutUser().getFirst().mentionCount(),
+                "but it has been confirmed twice, and the ranking can see that");
+    }
+
+    /** What is already remembered has to be shown, or there is nothing for "replaces" to point at. */
+    @Test
+    void extractionSeesWhatIsAlreadyRemembered() {
+        memory.addFact("Пользователь живёт в Казани", FactCategory.TRAIT, null, null, List.of());
+        stub.enqueue("""
+                {"entities":[],"facts":[]}""");
+
+        consolidator.consolidate(sessionWith("я переехал"));
+
+        assertTrue(stub.requests().getLast().toString().contains("живёт в Казани"),
+                "the model cannot contradict a fact it was never shown");
+    }
+
     @Test
     void newPersonAndFactAreRecorded() {
         stub.enqueue("""
