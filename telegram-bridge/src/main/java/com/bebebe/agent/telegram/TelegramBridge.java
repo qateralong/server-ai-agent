@@ -122,7 +122,8 @@ public final class TelegramBridge implements AutoCloseable {
         return pendingInputs;
     }
 
-    public void attachJobs(com.bebebe.agent.scheduler.JobStore jobs, java.time.ZoneId zone) {
+    public void attachJobs(com.bebebe.agent.scheduler.JobStore jobs,
+                           java.util.function.Supplier<java.time.ZoneId> zone) {
         menu.attachJobs(jobs, zone);
     }
 

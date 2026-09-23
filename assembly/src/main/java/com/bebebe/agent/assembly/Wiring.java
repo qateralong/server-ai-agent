@@ -41,8 +41,9 @@ public final class Wiring {
     private Wiring() {
     }
 
-    public static ToolRegistry buildTools(AppConfig config) {
-        ToolRegistry registry = new ToolRegistry().register(new GetCurrentTimeTool());
+    public static ToolRegistry buildTools(AppConfig config, java.time.Clock clock) {
+
+        ToolRegistry registry = new ToolRegistry().register(new GetCurrentTimeTool(clock));
         try {
             registry.register(new WebSearchTool(WebSearchConfig.from(config.section(WebSearchConfig.SECTION))));
         } catch (RuntimeException e) {
@@ -100,9 +101,11 @@ public final class Wiring {
         }
     }
 
-    public static NotesStore startNotes(AppConfig config, ToolRegistry tools, AgentCore core) {
+    public static NotesStore startNotes(AppConfig config, ToolRegistry tools, AgentCore core,
+                                       java.time.Clock clock) {
         try {
-            NotesStore notes = new NotesStore(NotesConfig.from(config.section(NotesConfig.SECTION)));
+
+            NotesStore notes = new NotesStore(NotesConfig.from(config.section(NotesConfig.SECTION)), clock);
             NotesTool.ReminderLink link = core.reminders() == null ? null : new NotesTool.ReminderLink() {
                 @Override
                 public long schedule(java.time.Instant fireAt, String prompt, String summary) {
@@ -114,7 +117,7 @@ public final class Wiring {
                     return core.reminders().store().cancel(jobId);
                 }
             };
-            tools.register(new NotesTool(notes, link, java.time.Clock.systemDefaultZone()));
+            tools.register(new NotesTool(notes, link, clock));
             return notes;
         } catch (RuntimeException e) {
             log.error("Notes not enabled: {}", e.getMessage());

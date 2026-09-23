@@ -59,6 +59,9 @@ public final class AgentCore {
     private final EntityResolver entityResolver;
     private final ToolRegistry tools;
     private final ReminderService reminders;
+
+    /** Kept for the "Now:" block of the prompt: its zone is the user's, not the machine's. */
+    private final java.time.Clock clock;
     private final ConfirmationStore confirmations = new ConfirmationStore();
     private final int budgetLimit;
 
@@ -109,6 +112,7 @@ public final class AgentCore {
                      java.time.Clock clock,
                      int budgetLimit) {
         this.agentSwitch = agentSwitch;
+        this.clock = clock;
         this.llm = llm;
         this.scripts = scripts;
         this.library = library;
@@ -661,7 +665,7 @@ public final class AgentCore {
                 + DecisionProtocol.contextBlock(candidates, last)
                 + (tools.find("web_search").isPresent() ? FreshnessHints.hintFor(message.text()) : "");
 
-        String system = DecisionProtocol.decisionPrompt(tools, scripts) + memoryBlock + DecisionProtocol.nowBlock()
+        String system = DecisionProtocol.decisionPrompt(tools, scripts) + memoryBlock + DecisionProtocol.nowBlock(clock)
                 + (reminders == null ? "" : reminders.promptBlock())
                 + (live() ? DecisionProtocol.liveRepliesBlock() : "") + personaBlock();
         LlmResponse response = askStructured(system, history, userBlock, scripts);

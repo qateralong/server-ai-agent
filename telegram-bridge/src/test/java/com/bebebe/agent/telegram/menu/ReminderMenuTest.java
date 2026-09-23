@@ -50,7 +50,7 @@ class ReminderMenuTest {
                 """.formatted(temp.resolve("jobs.db"))).section(SchedulerConfig.SECTION)));
         controller = new MenuController(new AgentSwitch(false), AppSettings.from(AppConfig.fromToml("")),
                 List::of, library, TestLibrary.NO_CONFIRM, memory, TestLibrary.NO_MEMORY_ACTIONS);
-        controller.attachJobs(jobs, ZONE);
+        controller.attachJobs(jobs, () -> ZONE);
     }
 
     @AfterEach

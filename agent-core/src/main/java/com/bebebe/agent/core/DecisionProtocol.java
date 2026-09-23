@@ -255,8 +255,13 @@ public final class DecisionProtocol {
                 complaint);
     }
 
-    public static String nowBlock() {
-        java.time.ZonedDateTime now = java.time.ZonedDateTime.now();
+    /**
+     * The model computes {@code fire_at} itself, so this block is the only thing telling it
+     * which "now" and which offset to count from. It used to call ZonedDateTime.now() with no
+     * argument -- the machine's zone -- which on a server is not the user's.
+     */
+    public static String nowBlock(java.time.Clock clock) {
+        java.time.ZonedDateTime now = java.time.ZonedDateTime.now(clock);
         return "\nNow: " + now.format(java.time.format.DateTimeFormatter.ofPattern(
                 "EEEE, d MMMM yyyy, HH:mm", java.util.Locale.ENGLISH))
                 + " (" + now.getZone().getId() + ", offset " + now.getOffset().getId() + ").\n"

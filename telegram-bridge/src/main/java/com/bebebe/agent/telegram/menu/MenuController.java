@@ -37,9 +37,13 @@ public final class MenuController {
     private final MemoryActions memoryActions;
 
     private volatile JobStore jobs;
-    private volatile java.time.ZoneId zone = java.time.ZoneId.systemDefault();
+    /**
+     * A supplier, not a value: the zone is a live setting, and a snapshot taken at wiring time
+     * would keep drawing reminder times in the old zone until a restart.
+     */
+    private volatile java.util.function.Supplier<java.time.ZoneId> zone = java.time.ZoneId::systemDefault;
 
-    public void attachJobs(JobStore jobs, java.time.ZoneId zone) {
+    public void attachJobs(JobStore jobs, java.util.function.Supplier<java.time.ZoneId> zone) {
         this.jobs = jobs;
         this.zone = zone;
     }
@@ -244,6 +248,7 @@ public final class MenuController {
             case "voice" -> voiceReplies(data);
             case "vin" -> voiceInput(data);
             case "lang" -> language(data);
+            case "tz" -> timezone();
             case "live" -> liveReplies(data);
             case "typing" -> typingIndicator(data);
             case "scripts" -> scriptsEnabled(data);
@@ -399,6 +404,24 @@ public final class MenuController {
         settings.setScriptsEnabled(enable);
         return MenuResponse.show(SettingsScreens.root(settings),
                 persist(enable ? "Scripts on" : "Scripts off"));
+    }
+
+    private MenuResponse timezone() {
+        return MenuResponse.awaitInput(SettingsScreens.awaitingTimezone(settings),
+                new InputRequest(com.bebebe.agent.config.SettingsField.TIMEZONE.path(), this::acceptTimezone));
+    }
+
+    private InputOutcome acceptTimezone(String value) {
+        String raw = value.strip();
+        try {
+            settings.setTimezone(raw.equals("-") ? "" : raw);
+        } catch (java.time.DateTimeException e) {
+
+            return InputOutcome.rejected("Unknown time zone «" + raw
+                    + "». An IANA name is needed, for example Europe/Moscow.");
+        }
+        return InputOutcome.accepted(persist("Time zone: " + settings.zone().getId()),
+                CallbackData.section(MenuSection.SETTINGS));
     }
 
     private MenuResponse language(CallbackData data) {
@@ -580,17 +603,17 @@ public final class MenuController {
         }
         int page = data.arg(1).flatMap(MenuController::parsePage).orElse(0);
         return switch (data.action()) {
-            case "active" -> MenuResponse.show(ReminderScreens.active(store.pending(), page, zone));
-            case "history" -> MenuResponse.show(ReminderScreens.history(store.history(), page, zone));
+            case "active" -> MenuResponse.show(ReminderScreens.active(store.pending(), page, zone.get()));
+            case "history" -> MenuResponse.show(ReminderScreens.history(store.history(), page, zone.get()));
             case "view" -> data.arg(1).flatMap(MenuController::parseId).flatMap(store::byId)
                     .map(job -> MenuResponse.show(ReminderScreens.view(job,
-                            data.arg(2).flatMap(MenuController::parsePage).orElse(0), zone)))
-                    .orElseGet(() -> MenuResponse.show(ReminderScreens.active(store.pending(), 0, zone), "Not found"));
+                            data.arg(2).flatMap(MenuController::parsePage).orElse(0), zone.get())))
+                    .orElseGet(() -> MenuResponse.show(ReminderScreens.active(store.pending(), 0, zone.get()), "Not found"));
             case "cancel" -> {
                 Optional<Long> id = data.arg(1).flatMap(MenuController::parseId);
                 int back = data.arg(2).flatMap(MenuController::parsePage).orElse(0);
                 boolean done = id.isPresent() && store.cancel(id.get());
-                yield MenuResponse.show(ReminderScreens.active(store.pending(), back, zone),
+                yield MenuResponse.show(ReminderScreens.active(store.pending(), back, zone.get()),
                         done ? "Cancelled" : "Already inactive");
             }
             case "clear" -> {

@@ -87,6 +87,7 @@ public final class AgentAssembly implements AutoCloseable {
     private final com.bebebe.agent.stt.RemoteVoiceIngest telegramVoice;
     private final BuildInfo build;
     private final Path dataDir;
+    private final Clock clock;
 
     private AgentAssembly(AppConfig config, AppSettings settings, Options options) {
         this.config = config;
@@ -95,6 +96,16 @@ public final class AgentAssembly implements AutoCloseable {
         if (options.ollamaBaseUrl() != null) {
 
             settings.setEndpoint(options.ollamaBaseUrl());
+        }
+        // One clock for the whole graph, and its zone is the user's, not the machine's. Everything
+        // that shows or computes a time for the user reads the zone from here.
+        clock = com.bebebe.agent.config.UserClock.following(options.clock(), settings);
+        if (!settings.timezoneChosen()) {
+            log.warn("Time zone is not set ([agent] timezone): falling back to the machine's {}. "
+                    + "On a server in another zone reminders will fire at the wrong local time -- "
+                    + "set it in the window or in ⚙️ Settings in the chat.", clock.getZone());
+        } else {
+            log.info("Time zone: {}", clock.getZone());
         }
         providers = new LlmProviders(config, settings);
         llm = providers.switchable();
@@ -108,13 +119,13 @@ public final class AgentAssembly implements AutoCloseable {
         MemoryConfig memoryConfig = MemoryConfig.from(config.section(MemoryConfig.SECTION));
         memory = new MemoryStore(memoryConfig);
         jobs = new JobStore(SchedulerConfig.from(config.section(SchedulerConfig.SECTION)));
-        ToolRegistry tools = Wiring.buildTools(config);
-        core = new AgentCore(agentSwitch, llm, scripts, library, memory, tools, jobs, options.clock(),
+        ToolRegistry tools = Wiring.buildTools(config, clock);
+        core = new AgentCore(agentSwitch, llm, scripts, library, memory, tools, jobs, clock,
                 config.section("agent").integer("request_budget", RequestBudget.DEFAULT_LIMIT));
         core.setStopGrace(config.section("agent").seconds("stop_grace_seconds", Duration.ofSeconds(20)));
         core.setLiveReplies(settings::liveReplies);
         core.setScriptsEnabled(settings::scriptsEnabled);
-        notes = Wiring.startNotes(config, tools, core);
+        notes = Wiring.startNotes(config, tools, core, clock);
         dataDir = memoryConfig.dbPath().toAbsolutePath().getParent();
         personas = new PersonaStore(dataDir.resolve("personas.db"));
         core.setPersonas(personas);
@@ -126,7 +137,7 @@ public final class AgentAssembly implements AutoCloseable {
         telegram = Wiring.startTelegram(config, settings, agentSwitch, core, llm, library, memory,
                 options.telegramBaseUrl());
         if (telegram != null) {
-            telegram.attachJobs(jobs, ZoneId.systemDefault());
+            telegram.attachJobs(jobs, clock::getZone);
             if (notes != null) {
                 telegram.attachNotes(notes);
             }

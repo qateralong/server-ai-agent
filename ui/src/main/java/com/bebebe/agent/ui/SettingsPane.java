@@ -66,6 +66,8 @@ public final class SettingsPane extends ScrollPane {
     private final ToggleSwitch typingIndicator = new ToggleSwitch();
     private final ToggleSwitch voiceInput = new ToggleSwitch();
     private final ComboBox<com.bebebe.agent.i18n.Language> language = new ComboBox<>();
+    private final ComboBox<String> timezone = new ComboBox<>();
+    private final Label timezoneWarning = new Label();
     private final ToggleSwitch scriptsEnabled = new ToggleSwitch();
 
     private final Label status = new Label();
@@ -248,6 +250,17 @@ public final class SettingsPane extends ScrollPane {
                 return com.bebebe.agent.i18n.Language.from(value);
             }
         });
+        timezone.setEditable(true);
+        timezone.getItems().setAll(new java.util.TreeSet<>(java.time.ZoneId.getAvailableZoneIds()));
+        timezone.setVisibleRowCount(12);
+        timezone.setMaxWidth(320);
+        Label timezoneHint = new Label(Messages.t("Reminders, the time given to the model and every time shown "
+                + "here are counted in this zone. Empty -- follow the machine the agent runs on, which is "
+                + "wrong when the agent runs on a server in another zone."));
+        timezoneHint.getStyleClass().add(Styles.TEXT_SUBTLE);
+        timezoneHint.setWrapText(true);
+        timezoneWarning.getStyleClass().add(Styles.WARNING);
+        timezoneWarning.setWrapText(true);
         Label languageHint = new Label(Messages.t(SettingsField.LANGUAGE.warning()));
         languageHint.getStyleClass().add(Styles.TEXT_SUBTLE);
         languageHint.setWrapText(true);
@@ -269,6 +282,7 @@ public final class SettingsPane extends ScrollPane {
                 field(SettingsField.VOICE_REPLIES.title(), new VBox(4, voiceReplies, voiceHint)),
                 field(SettingsField.VOICE_INPUT.title(), new VBox(4, voiceInput, voiceInputHint)),
                 field(SettingsField.LANGUAGE.title(), new VBox(4, language, languageHint)),
+                field(SettingsField.TIMEZONE.title(), new VBox(4, timezone, timezoneWarning, timezoneHint)),
                 field(SettingsField.LIVE_REPLIES.title(), new VBox(4, liveReplies, liveHint)),
                 field(SettingsField.TYPING_INDICATOR.title(), new VBox(4, typingIndicator, typingHint)),
                 field(SettingsField.SCRIPTS_ENABLED.title(), new VBox(4, scriptsEnabled, scriptsHint)));
@@ -303,7 +317,21 @@ public final class SettingsPane extends ScrollPane {
         typingIndicator.setSelected(settings.typingIndicator());
         voiceInput.setSelected(settings.voiceInput());
         language.setValue(settings.language());
+        timezone.setValue(settings.timezoneSetting());
+        showTimezoneWarning(settings.timezoneChosen(), settings.zone().getId());
         scriptsEnabled.setSelected(settings.scriptsEnabled());
+    }
+
+    /**
+     * While no zone has been chosen the agent uses the machine's -- correct on a desktop, a
+     * guess on a server. Saying so is better than a silently wrong reminder at 17:00.
+     */
+    private void showTimezoneWarning(boolean chosen, String effective) {
+        timezoneWarning.setVisible(!chosen);
+        timezoneWarning.setManaged(!chosen);
+        timezoneWarning.setText(chosen ? ""
+                : Messages.t("Not set: using the machine's zone (%s). Check it -- if the agent runs on a "
+                        + "server, this is not your zone.").formatted(effective));
     }
 
     private void saveAll() {
@@ -326,6 +354,14 @@ public final class SettingsPane extends ScrollPane {
         settings.setTypingIndicator(typingIndicator.isSelected());
         settings.setVoiceInput(voiceInput.isSelected());
         settings.setLanguage(language.getValue());
+        try {
+            settings.setTimezone(timezone.getValue());
+        } catch (java.time.DateTimeException e) {
+
+            status.setText(Messages.t("Unknown time zone: ") + timezone.getValue());
+            return;
+        }
+        showTimezoneWarning(settings.timezoneChosen(), settings.zone().getId());
         settings.setScriptsEnabled(scriptsEnabled.isSelected());
 
         try {

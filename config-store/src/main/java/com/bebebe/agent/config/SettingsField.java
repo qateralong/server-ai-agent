@@ -40,6 +40,9 @@ public enum SettingsField {
     LANGUAGE("agent", "language", Apply.RESTART,
             "Interface language", false),
 
+    TIMEZONE("agent", "timezone", Apply.LIVE,
+            "Time zone", false),
+
     SCRIPTS_ENABLED("agent", "scripts_enabled", Apply.LIVE,
             "Scripts (actions on the computer)", false);
 

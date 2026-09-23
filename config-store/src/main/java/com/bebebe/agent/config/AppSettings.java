@@ -7,6 +7,7 @@ import com.bebebe.agent.i18n.Language;
 import com.bebebe.agent.i18n.Messages;
 
 import java.nio.file.Path;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -34,6 +35,7 @@ public final class AppSettings {
     private boolean typingIndicator;
     private boolean voiceInput;
     private Language language;
+    private String timezone;
     private boolean scriptsEnabled;
 
     public static final class ProviderSlot {
@@ -69,6 +71,7 @@ public final class AppSettings {
                         boolean typingIndicator,
                         boolean voiceInput,
                         Language language,
+                        String timezone,
                         boolean scriptsEnabled) {
         this.file = file;
         this.provider = normalizeProvider(provider);
@@ -85,6 +88,7 @@ public final class AppSettings {
         this.language = language;
 
         Messages.setLanguage(language);
+        this.timezone = normalizeZone(timezone);
         this.scriptsEnabled = scriptsEnabled;
     }
 
@@ -122,6 +126,7 @@ public final class AppSettings {
                 config.section("telegram").bool("typing_indicator", true),
                 config.section("telegram").bool("voice_input", true),
                 Language.from(config.section("agent").string("language", "auto")),
+                config.section("agent").string("timezone", ""),
                 config.section("agent").bool("scripts_enabled", true));
     }
 
@@ -358,6 +363,55 @@ public final class AppSettings {
         fire(SettingsField.LANGUAGE);
     }
 
+    /**
+     * The zone every user-facing time is computed in: reminders, the "Now:" block of the prompt,
+     * {@code get_current_time}. Empty means "not chosen yet" -- then the machine's own zone is
+     * used as a stand-in, which is right for the desktop build and a guess on a server.
+     */
+    public ZoneId zone() {
+        synchronized (lock) {
+            return timezone.isEmpty() ? ZoneId.systemDefault() : ZoneId.of(timezone);
+        }
+    }
+
+    /** false while the zone is only a guess -- both interfaces say so instead of staying silent. */
+    public boolean timezoneChosen() {
+        synchronized (lock) {
+            return !timezone.isEmpty();
+        }
+    }
+
+    /** The stored value: an IANA id, or empty for "follow the machine". */
+    public String timezoneSetting() {
+        synchronized (lock) {
+            return timezone;
+        }
+    }
+
+    /**
+     * @param value an IANA id such as Europe/Moscow, or empty/"auto" to follow the machine
+     * @throws java.time.DateTimeException if the id is not a known zone
+     */
+    public void setTimezone(String value) {
+        String target = normalizeZone(value);
+        synchronized (lock) {
+            if (timezone.equals(target)) {
+                return;
+            }
+            timezone = target;
+        }
+        fire(SettingsField.TIMEZONE);
+    }
+
+    private static String normalizeZone(String raw) {
+        if (raw == null || raw.isBlank() || raw.strip().equalsIgnoreCase("auto")) {
+            return "";
+        }
+        String value = raw.strip();
+
+        return ZoneId.of(value).getId();
+    }
+
     public boolean scriptsEnabled() {
         synchronized (lock) {
             return scriptsEnabled;
@@ -392,6 +446,7 @@ public final class AppSettings {
             values.put(SettingsField.TYPING_INDICATOR.path(), typingIndicator);
             values.put(SettingsField.VOICE_INPUT.path(), voiceInput);
             values.put(SettingsField.LANGUAGE.path(), language.code());
+            values.put(SettingsField.TIMEZONE.path(), timezone);
             values.put(SettingsField.SCRIPTS_ENABLED.path(), scriptsEnabled);
         }
         ConfigFileWriter.update(file, values);
@@ -438,6 +493,7 @@ public final class AppSettings {
             case TYPING_INDICATOR -> typingIndicator();
             case VOICE_INPUT -> voiceInput();
             case LANGUAGE -> language().code();
+            case TIMEZONE -> timezoneSetting();
             case SCRIPTS_ENABLED -> scriptsEnabled();
         };
     }

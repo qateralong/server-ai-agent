@@ -25,6 +25,29 @@ public final class SettingsScreens {
      * One button per language, the current one marked. A toggle would do for two, but the
      * name of a language has to be readable before you switch to it -- so they are all shown.
      */
+    /**
+     * Asked as text, not as buttons: there are some six hundred IANA zones and no useful way
+     * to narrow them down with an inline keyboard.
+     */
+    public static MenuScreen awaitingTimezone(AppSettings settings) {
+        return new MenuScreen(MenuSection.SETTINGS, Messages.t("""
+                <b>🌍 Time zone</b>
+
+                Now: <code>%s</code>%s
+
+                Send an IANA zone name in the next message, for example \
+                <code>Europe/Moscow</code>, <code>Asia/Tokyo</code>, <code>UTC</code>. \
+                Send "-" to follow the machine the agent runs on.
+
+                Reminders, the current time given to the model and every time shown here \
+                are counted in this zone.
+
+                Cancel: /cancel""").formatted(
+                        TelegramApi.escapeHtml(settings.zone().getId()),
+                        settings.timezoneChosen() ? "" : Messages.t(" (not set -- taken from the machine)")),
+                InlineKeyboardMarkup.of(List.of(navigationRow())));
+    }
+
     private static List<InlineKeyboardButton> languageRow(com.bebebe.agent.i18n.Language current) {
         List<InlineKeyboardButton> row = new ArrayList<>();
         for (com.bebebe.agent.i18n.Language language : com.bebebe.agent.i18n.Language.values()) {
@@ -45,6 +68,8 @@ public final class SettingsScreens {
         boolean typing = settings.typingIndicator();
         boolean voiceIn = settings.voiceInput();
         com.bebebe.agent.i18n.Language language = settings.language();
+        String zone = settings.zone().getId()
+                + (settings.timezoneChosen() ? "" : Messages.t(" (not set -- the machine's)"));
         boolean scripts = settings.scriptsEnabled();
 
         String text = Messages.t("""
@@ -56,6 +81,7 @@ public final class SettingsScreens {
                 💡 Hints: %s
                 🔊 Voice replies: %s
                 🌐 Language: %s
+                🌍 Time zone: %s
                 🎤 Voice messages from you: %s
                 💬 Several short messages: %s
                 ⌨️ "Typing..." indicator: %s
@@ -72,6 +98,7 @@ public final class SettingsScreens {
                 hints ? "on" : "off",
                 voice ? "on" : "off",
                 language.title(),
+                zone,
                 voiceIn ? "accepted" : "off",
                 live ? "on" : "off",
                 typing ? "on" : "off",
@@ -105,6 +132,7 @@ public final class SettingsScreens {
                         voice ? "🔊 Disable voice replies" : "🔊 Enable voice replies",
                         CallbackData.voiceReplies(!voice).encode())),
                 languageRow(language),
+                List.of(InlineKeyboardButton.of("🌍 Time zone", CallbackData.timezone().encode())),
                 List.of(InlineKeyboardButton.of(
                         voiceIn ? "🎤 Do not accept voice messages" : "🎤 Accept voice messages",
                         CallbackData.voiceInput(!voiceIn).encode())),
