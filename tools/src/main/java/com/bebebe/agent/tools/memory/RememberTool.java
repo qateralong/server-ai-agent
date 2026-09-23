@@ -61,6 +61,9 @@ public final class RememberTool implements Tool {
                 "description", "names of the people it is about; empty when it is about the user"));
         parameters.put("replaces", Map.of("type", "integer",
                 "description", "the number of the fact this one corrects, or 0"));
+        parameters.put("keywords", Map.of("type", "array", "items", Map.of("type", "string"),
+                "description", "3-6 other words a later question about this might use, not "
+                        + "repeating the words of the text: «переезд», «город», «жильё»"));
         return parameters;
     }
 
@@ -73,7 +76,8 @@ public final class RememberTool implements Tool {
         String category = RecallTool.string(arguments, "category");
         long replaces = longValue(arguments, "replaces");
 
-        MemoryAccess.Outcome outcome = memory.remember(text, category, names(arguments), replaces);
+        MemoryAccess.Outcome outcome = memory.remember(text, category, names(arguments, "about"),
+                replaces, names(arguments, "keywords"));
         log.atInfo()
                 .addKeyValue("event", "memory.remember")
                 .addKeyValue("text", text)
@@ -84,8 +88,8 @@ public final class RememberTool implements Tool {
         return outcome.ok() ? ToolResult.ok(outcome.message()) : ToolResult.failure(outcome.message());
     }
 
-    private static List<String> names(Map<String, Object> arguments) {
-        Object value = arguments == null ? null : arguments.get("about");
+    private static List<String> names(Map<String, Object> arguments, String key) {
+        Object value = arguments == null ? null : arguments.get(key);
         List<String> names = new ArrayList<>();
         if (value instanceof Iterable<?> items) {
             for (Object item : items) {

@@ -231,6 +231,16 @@ public final class DecisionProtocol {
     }
 
     public static String fixPrompt(String userRequest, String code, String failure, int attempt) {
+        return fixPrompt(userRequest, code, failure, attempt, "");
+    }
+
+    /**
+     * @param alreadyTried what has failed earlier in this same request. Without it every fix looks
+     *                     like the first one from inside, and the model happily proposes again the
+     *                     approach it proposed two rounds ago -- at a call from the budget each time.
+     */
+    public static String fixPrompt(String userRequest, String code, String failure, int attempt,
+                                   String alreadyTried) {
         return """
                 The script you proposed finished with an error. Fix it.
 
@@ -244,14 +254,15 @@ public final class DecisionProtocol {
 
                 Run result:
                 %s
-
+                %s
                 This is fix attempt #%d. Return JSON of the same format:
                   * type = "run_script" and the corrected python_code -- if the error is
                     visible and fixable;
                   * type = "reply" and text (in Russian) -- if the task cannot be solved this way,
                     explain to the user why.
-                Do not repeat the same code without changes.
-                """.formatted(userRequest, code, failure, attempt);
+                Do not repeat the same code without changes, and do not go back to an approach
+                listed above as already tried -- if none of them can work, say so with type="reply".
+                """.formatted(userRequest, code, failure, alreadyTried, attempt);
     }
 
     public static String complaintPrompt(String complaint, ScriptEntry script, String code, String lastOutput) {

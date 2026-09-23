@@ -55,6 +55,64 @@ class MemoryMenuTest {
         return controller.handle(data, CHAT);
     }
 
+    /**
+     * The review queue. Confirming a fact is the cheapest high-quality signal memory can get --
+     * everything else it knows about a fact is either the model's own judgement or a count of how
+     * often the fact got reused.
+     */
+    @Test
+    void reviewQueueShowsOnlyWhatNobodyHasCheckedYet() {
+        Fact guessed = memory.addFact("Пользователь любит кофе", FactCategory.PREFERENCE, null, null,
+                List.of(), com.bebebe.agent.memory.FactSource.EXTRACTED, List.of());
+        memory.addFact("Пользователь просил отвечать коротко", FactCategory.PREFERENCE, null, null,
+                List.of(), com.bebebe.agent.memory.FactSource.STATED, List.of());
+
+        MenuScreen root = controller.screenFor(MenuSection.MEMORY);
+        assertTrue(keyboard(root).contains(CallbackData.memoryReview(0).encode()),
+                "with something to review the button is there: " + keyboard(root));
+
+        MenuScreen queue = press(CallbackData.memoryReview(0)).screen();
+        assertTrue(queue.text().contains("любит кофе"), queue.text());
+        assertFalse(queue.text().contains("отвечать коротко"),
+                "what the user dictated was never a guess and needs no review");
+        assertTrue(keyboard(queue).contains(CallbackData.memoryFactConfirm(guessed.id(), 0).encode()));
+    }
+
+    @Test
+    void confirmingAFactTakesItOutOfTheQueue() {
+        Fact guessed = memory.addFact("Пользователь любит кофе", FactCategory.PREFERENCE, null, null, List.of());
+
+        MenuResponse response = press(CallbackData.memoryFactConfirm(guessed.id(), 0));
+
+        assertEquals(com.bebebe.agent.memory.FactSource.CONFIRMED,
+                memory.fact(guessed.id()).orElseThrow().source());
+        assertEquals(0, memory.countUnreviewed());
+        assertTrue(response.screen().text().contains("Nothing to review"),
+                response.screen().text());
+    }
+
+    @Test
+    void rejectingAFactRetractsItButKeepsIt() {
+        Fact wrong = memory.addFact("Пользователь курит", FactCategory.TRAIT, null, null, List.of());
+
+        press(CallbackData.memoryFactRetract(wrong.id(), 0));
+
+        assertTrue(memory.factsAboutUser().isEmpty(), "it is not offered to the model any more");
+        assertTrue(memory.fact(wrong.id()).isPresent(),
+                "rejecting an extraction is a verdict about it, not a request to erase it");
+        assertFalse(memory.fact(wrong.id()).orElseThrow().isCurrent());
+    }
+
+    @Test
+    void withNothingToReviewTheButtonIsNotShown() {
+        memory.addFact("Пользователь просил отвечать коротко", FactCategory.PREFERENCE, null, null,
+                List.of(), com.bebebe.agent.memory.FactSource.STATED, List.of());
+
+        assertFalse(keyboard(controller.screenFor(MenuSection.MEMORY))
+                        .contains(CallbackData.memoryReview(0).encode()),
+                "a button that always says zero teaches people to stop reading it");
+    }
+
     @Test
     void rootScreenShowsCounters() {
         memory.addEntity("Саша", List.of(), "", "");

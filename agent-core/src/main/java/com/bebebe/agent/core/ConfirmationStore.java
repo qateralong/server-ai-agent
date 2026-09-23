@@ -21,11 +21,13 @@ public final class ConfirmationStore {
     public String put(UserMessage message,
                       com.bebebe.agent.script.library.ScriptEntry script,
                       String code,
-                      RequestBudget budget) {
+                      RequestBudget budget,
+                      TaskAttempts attempts) {
         purgeExpired();
         String token = newToken();
         pending.put(token, new PendingExecution(
-                token, message, script, code, budget, Instant.now().plus(PendingExecution.TTL)));
+                token, message, script, code, budget, attempts,
+                Instant.now().plus(PendingExecution.TTL)));
         log.info("Waiting for confirmation to launch '{}', token {}", script.displayName(), token);
         return token;
     }

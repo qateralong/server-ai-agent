@@ -180,6 +180,18 @@ public record CallbackData(String namespace, List<String> parts) {
         return of(NS_MEMORY, "fdel", Long.toString(factId), Long.toString(entityId), Integer.toString(page));
     }
 
+    public static CallbackData memoryReview(int page) {
+        return of(NS_MEMORY, "new", Integer.toString(page));
+    }
+
+    public static CallbackData memoryFactConfirm(long factId, int page) {
+        return of(NS_MEMORY, "ok", Long.toString(factId), Integer.toString(page));
+    }
+
+    public static CallbackData memoryFactRetract(long factId, int page) {
+        return of(NS_MEMORY, "no", Long.toString(factId), Integer.toString(page));
+    }
+
     public static CallbackData memoryPersonDelete(long entityId) {
         return of(NS_MEMORY, "pdel", Long.toString(entityId));
     }

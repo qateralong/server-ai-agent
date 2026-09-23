@@ -15,7 +15,8 @@ The model is Ollama (cloud or a local daemon) or Claude, switchable on the fly.
   account in later conversations. It can be asked to remember something on the
   spot, corrected when it got something wrong, and it keeps a few lines about
   every conversation that has ended, so "what did we discuss yesterday?" has an
-  answer.
+  answer. Whatever it decided to remember on its own waits in a review queue,
+  where one tap says "yes, that's right" -- and confirmed facts are trusted more.
 * **Notes and lists** — plain markdown files, they open in Obsidian.
 * **Reminders** — "remind me tomorrow at 9", with repeats; missed ones are
   caught up.

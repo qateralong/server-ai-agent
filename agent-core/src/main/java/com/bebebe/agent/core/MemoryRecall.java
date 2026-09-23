@@ -58,6 +58,15 @@ final class MemoryRecall {
     /** Recent finished conversations offered as episodic context. Kept small: they are prose. */
     static final int EPISODES = 3;
 
+    /**
+     * People connected to somebody named in the message by a shared fact, and how much of them is
+     * offered. Deliberately tiny: this is a nudge across one edge of the graph, and every line
+     * spent on a guess is a line taken from what was actually asked about.
+     */
+    static final int RELATED_PEOPLE = 2;
+
+    static final int FACTS_PER_RELATED = 2;
+
     /** The explicit search behind the recall tool digs deeper than the automatic sweep. */
     static final int SEARCH_SCANNED = 2000;
 
@@ -82,11 +91,12 @@ final class MemoryRecall {
                      List<Fact> procedures,
                      List<Fact> recalled,
                      List<DialogSession> episodes,
+                     Map<Entity, List<Fact>> related,
                      List<Long> offered) {
 
         String block() {
             return MemoryProtocol.contextBlock(mentioned, factsByEntity, aboutUser, procedures,
-                    recalled, episodes);
+                    recalled, episodes, related);
         }
 
         boolean isEmpty() {
@@ -121,8 +131,53 @@ final class MemoryRecall {
                 .limit(RECALL_LIMIT)
                 .toList();
 
+        Map<Entity, List<Fact>> related = relatedTo(mentioned, already, message, now);
+        related.values().forEach(list -> list.forEach(f -> already.add(f.id())));
+
+        List<Long> offered = new ArrayList<>(ids(byEntity.values(), aboutUser, procedures, recalled));
+        related.values().forEach(list -> list.forEach(f -> {
+            if (!offered.contains(f.id())) {
+                offered.add(f.id());
+            }
+        }));
         return new Selection(mentioned, byEntity, aboutUser, procedures, recalled,
-                memory.recentSummaries(EPISODES), ids(byEntity.values(), aboutUser, procedures, recalled));
+                memory.recentSummaries(EPISODES), related, List.copyOf(offered));
+    }
+
+    /**
+     * People who share a fact with somebody named in the message.
+     *
+     * <p>"Саша и Лена женаты" was already one fact about two people, but nothing walked that
+     * edge: asking about Саша said nothing about Лена. One hop, two people, two facts each --
+     * enough to make the connection visible, small enough not to turn every mention of a friend
+     * into a tour of the address book.
+     */
+    private Map<Entity, List<Fact>> relatedTo(List<Entity> mentioned, Set<Long> already,
+                                              String message, Instant now) {
+        if (mentioned.isEmpty()) {
+            return Map.of();
+        }
+        Set<Long> seen = new HashSet<>();
+        mentioned.forEach(entity -> seen.add(entity.id()));
+
+        Map<Entity, List<Fact>> out = new LinkedHashMap<>();
+        for (Entity entity : mentioned) {
+            for (Entity neighbour : memory.relatedEntities(entity.id(), RELATED_PEOPLE)) {
+                if (!seen.add(neighbour.id()) || out.size() >= RELATED_PEOPLE) {
+                    continue;
+                }
+                List<Fact> facts = FactRelevance.pick(
+                                memory.factsOf(neighbour.id()), message, now, FACTS_PER_RELATED + already.size())
+                        .stream()
+                        .filter(f -> !already.contains(f.id()))
+                        .limit(FACTS_PER_RELATED)
+                        .toList();
+                if (!facts.isEmpty()) {
+                    out.put(neighbour, facts);
+                }
+            }
+        }
+        return out;
     }
 
     /**
@@ -159,7 +214,7 @@ final class MemoryRecall {
                 .toList();
 
         return new Selection(named, byEntity, List.of(), List.of(), matched,
-                episodesMatching(text), ids(byEntity.values(), List.of(), List.of(), matched));
+                episodesMatching(text), Map.of(), ids(byEntity.values(), List.of(), List.of(), matched));
     }
 
     /** Past conversations whose summary shares a word with the query, newest first. */

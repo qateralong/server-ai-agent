@@ -19,6 +19,11 @@ import java.util.List;
  *       a repeat was simply dropped as a duplicate and told nobody anything.
  *   <li>{@code usedCount} / {@code lastUsedAt} -- how often the model actually leaned on it. The
  *       only honest signal for ranking; everything else is a guess about what might be relevant.
+ *   <li>{@code source} -- who decided this was worth remembering, the user or the model.
+ *   <li>{@code keywords} -- the other words somebody might use to ask about this, written down
+ *       once when the fact is stored. Recall is lexical, so a fact found only by its own wording
+ *       is invisible to a question phrased differently; expanding at write time costs one shot,
+ *       expanding at read time would cost one on every message.
  * </ul>
  */
 public record Fact(
@@ -33,7 +38,9 @@ public record Fact(
         Instant supersededAt,
         int mentionCount,
         int usedCount,
-        Instant lastUsedAt
+        Instant lastUsedAt,
+        FactSource source,
+        List<String> keywords
 ) {
 
     public Fact {
@@ -42,12 +49,27 @@ public record Fact(
         entityIds = entityIds == null ? List.of() : List.copyOf(entityIds);
         mentionCount = Math.max(1, mentionCount);
         usedCount = Math.max(0, usedCount);
+        source = source == null ? FactSource.EXTRACTED : source;
+        keywords = keywords == null ? List.of() : keywords.stream()
+                .filter(k -> k != null && !k.isBlank()).map(String::strip).distinct().toList();
     }
 
     /** A brand new fact: nothing has happened to it yet. */
     public Fact(long id, String text, FactCategory category, LocalDate factDate,
                 Long sourceMessageId, List<Long> entityIds, Instant createdAt) {
-        this(id, text, category, factDate, sourceMessageId, entityIds, createdAt, null, null, 1, 0, null);
+        this(id, text, category, factDate, sourceMessageId, entityIds, createdAt, null, null, 1, 0, null,
+                FactSource.EXTRACTED, List.of());
+    }
+
+    /**
+     * The text plus everything else the fact can be found by.
+     *
+     * <p>Used for matching a question against the fact, and <b>not</b> for deciding whether two
+     * facts are the same thing: near-duplicate detection compares what was actually said, or two
+     * different facts sharing a generous set of keywords would start swallowing each other.
+     */
+    public String searchText() {
+        return keywords.isEmpty() ? text : text + " " + String.join(" ", keywords);
     }
 
     /** Still believed: neither replaced nor retracted. */
@@ -72,6 +94,7 @@ public record Fact(
         if (mentionCount > 1) {
             sb.append(" [confirmed ×").append(mentionCount).append(']');
         }
+        sb.append(source.marker());
         return sb.toString();
     }
 

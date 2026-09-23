@@ -58,7 +58,8 @@ final class CoreMemoryAccess implements MemoryAccess {
     }
 
     @Override
-    public Outcome remember(String text, String category, List<String> about, long replaces) {
+    public Outcome remember(String text, String category, List<String> about, long replaces,
+                            List<String> keywords) {
         List<Long> entityIds = new ArrayList<>();
         List<String> people = new ArrayList<>();
         for (String name : about == null ? List.<String>of() : about) {
@@ -82,7 +83,11 @@ final class CoreMemoryAccess implements MemoryAccess {
                     + "confirmation, nothing new written. Tell the user you already knew this.");
         }
 
-        Fact stored = memory.addFact(text, FactCategory.fromWire(category), null, null, entityIds);
+        // STATED, not EXTRACTED: the user asked for this in so many words, and that is worth
+        // more than the model's own judgement about what was worth keeping.
+        Fact stored = memory.addFact(text, FactCategory.fromWire(category), null, null, entityIds,
+                com.bebebe.agent.memory.FactSource.STATED,
+                keywords == null ? List.of() : keywords);
 
         String replaced = "";
         if (replaces > 0) {

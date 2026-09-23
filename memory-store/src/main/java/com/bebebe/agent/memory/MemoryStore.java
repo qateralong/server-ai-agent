@@ -102,6 +102,8 @@ public final class MemoryStore implements AutoCloseable {
             addColumn(s, "facts", "mention_count", "INTEGER NOT NULL DEFAULT 1");
             addColumn(s, "facts", "used_count", "INTEGER NOT NULL DEFAULT 0");
             addColumn(s, "facts", "last_used_at", "TEXT");
+            addColumn(s, "facts", "source", "TEXT NOT NULL DEFAULT 'extracted'");
+            addColumn(s, "facts", "keywords", "TEXT NOT NULL DEFAULT ''");
             addColumn(s, "sessions", "summary", "TEXT NOT NULL DEFAULT ''");
             s.executeUpdate("CREATE INDEX IF NOT EXISTS idx_facts_current ON facts(superseded_at, id)");
         }
@@ -135,29 +137,68 @@ public final class MemoryStore implements AutoCloseable {
         this.sessionClosed = listener == null ? session -> { } : listener;
     }
 
+    /**
+     * The conversation the user is having, whatever they are having it through.
+     *
+     * <p>Sessions used to be per channel: asking by voice and following up by text produced two
+     * separate conversations with separate logs, although the agent answers both into the same
+     * Telegram chat and the user sees one stream. The agent then failed to understand "а теперь
+     * на английский" about something said out loud a minute earlier.
+     *
+     * <p>This is allowed because the whole system is single-user by design ({@code 1.7}): there is
+     * one person talking, and the channel is transport, not an interlocutor. The session's
+     * {@code conversation_key} follows the channel the user last spoke through, so anything sent
+     * back on its own initiative -- the "same person?" question, a consolidation digest -- goes
+     * where they actually are.
+     */
     public synchronized DialogSession openOrContinue(String conversationKey) {
-        Optional<DialogSession> active = activeSession(conversationKey);
+        Optional<DialogSession> active = activeSession();
         if (active.isPresent()) {
             DialogSession session = active.get();
             Instant deadline = session.lastMessageAt().plus(config.sessionIdle());
             if (Instant.now().isBefore(deadline)) {
-                return session;
+                return session.conversationKey().equals(conversationKey)
+                        ? session
+                        : retarget(session, conversationKey);
             }
             endSession(session.id());
-            log.info("Session {} closed after idle ({})", session.id(), conversationKey);
+            log.info("Session {} closed after idle ({})", session.id(), session.conversationKey());
         }
         return startSession(conversationKey);
     }
 
-    public synchronized Optional<DialogSession> activeSession(String conversationKey) {
+    /** The same conversation, now being had through another channel. */
+    private DialogSession retarget(DialogSession session, String conversationKey) {
         try (PreparedStatement ps = connection.prepareStatement(
-                "SELECT * FROM sessions WHERE conversation_key = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1")) {
+                "UPDATE sessions SET conversation_key = ? WHERE id = ?")) {
             ps.setString(1, conversationKey);
+            ps.setLong(2, session.id());
+            ps.executeUpdate();
+            log.debug("Session {} continues through {} (was {})",
+                    session.id(), conversationKey, session.conversationKey());
+            return session(session.id()).orElse(session);
+        } catch (SQLException e) {
+            throw new MemoryException("Cannot move session " + session.id() + " to " + conversationKey, e);
+        }
+    }
+
+    /**
+     * The one conversation that is currently open. The key is ignored on purpose -- see
+     * {@link #openOrContinue(String)}; the parameter is kept because callers have one at hand and
+     * it makes the intent readable at the call site.
+     */
+    public synchronized Optional<DialogSession> activeSession(String conversationKey) {
+        return activeSession();
+    }
+
+    public synchronized Optional<DialogSession> activeSession() {
+        try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT * FROM sessions WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1")) {
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? Optional.of(readSession(rs)) : Optional.empty();
             }
         } catch (SQLException e) {
-            throw new MemoryException("Cannot read session " + conversationKey, e);
+            throw new MemoryException("Cannot read the active session", e);
         }
     }
 
@@ -389,6 +430,39 @@ public final class MemoryStore implements AutoCloseable {
         }
     }
 
+    /**
+     * People who share a fact with this one, most shared facts first.
+     *
+     * <p>"Саша и Лена женаты" is already stored as one fact about two people, but nothing ever
+     * walked that edge: asking about Саша told the model nothing about Лена, even though the
+     * connection was right there. One hop only, and capped -- this is a nudge, not a graph
+     * traversal, and the prompt is supposed to grow with the question.
+     */
+    public synchronized List<Entity> relatedEntities(long entityId, int limit) {
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT e.*, COUNT(*) AS shared FROM entities e
+                JOIN fact_entities theirs ON theirs.entity_id = e.id
+                JOIN fact_entities ours   ON ours.fact_id = theirs.fact_id
+                JOIN facts f              ON f.id = ours.fact_id AND f.superseded_at IS NULL
+                WHERE ours.entity_id = ? AND e.id <> ?
+                GROUP BY e.id
+                ORDER BY shared DESC, e.id
+                LIMIT ?""")) {
+            ps.setLong(1, entityId);
+            ps.setLong(2, entityId);
+            ps.setInt(3, Math.max(1, limit));
+            List<Entity> list = new ArrayList<>();
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    list.add(readEntity(rs));
+                }
+            }
+            return list;
+        } catch (SQLException e) {
+            throw new MemoryException("Cannot read people related to entity " + entityId, e);
+        }
+    }
+
     public synchronized Optional<Entity> findByName(String name) {
         if (name == null || name.isBlank()) {
             return Optional.empty();
@@ -428,9 +502,21 @@ public final class MemoryStore implements AutoCloseable {
 
     public synchronized Fact addFact(String text, FactCategory category, LocalDate date,
                                      Long sourceMessageId, List<Long> entityIds) {
+        return addFact(text, category, date, sourceMessageId, entityIds, FactSource.EXTRACTED, List.of());
+    }
+
+    /**
+     * @param source   who decided this was worth remembering
+     * @param keywords other words a question about this might use; written once, here, because
+     *                 expanding the wording on every read would cost a model call per message
+     */
+    public synchronized Fact addFact(String text, FactCategory category, LocalDate date,
+                                     Long sourceMessageId, List<Long> entityIds,
+                                     FactSource source, List<String> keywords) {
         Instant now = Instant.now();
         try (PreparedStatement ps = connection.prepareStatement(
-                "INSERT INTO facts (text, category, fact_date, source_message_id, created_at) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO facts (text, category, fact_date, source_message_id, created_at, source, keywords) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 Statement.RETURN_GENERATED_KEYS)) {
             ps.setString(1, text.strip());
             ps.setString(2, category.wireName());
@@ -441,6 +527,8 @@ public final class MemoryStore implements AutoCloseable {
                 ps.setLong(4, sourceMessageId);
             }
             ps.setString(5, now.toString());
+            ps.setString(6, (source == null ? FactSource.EXTRACTED : source).wireName());
+            ps.setString(7, joinAliases(keywords));
             ps.executeUpdate();
             long id;
             try (ResultSet keys = ps.getGeneratedKeys()) {
@@ -462,6 +550,7 @@ public final class MemoryStore implements AutoCloseable {
                     .addKeyValue("fact_id", id)
                     .addKeyValue("category", category.wireName())
                     .addKeyValue("entities", entityIds == null ? "" : entityIds.toString())
+                    .addKeyValue("source", fact.source().wireName())
                     .log("Fact remembered: {}", fact.text());
             return fact;
         } catch (SQLException e) {
@@ -606,6 +695,58 @@ public final class MemoryStore implements AutoCloseable {
             return touched;
         } catch (SQLException e) {
             throw new MemoryException("Cannot mark facts as used", e);
+        }
+    }
+
+    /**
+     * A human looked at the fact and said it was right.
+     *
+     * <p>The strongest thing memory can have, and the cheapest to collect: one button. Everything
+     * else about a fact is either the model's judgement or a count of how often it was reused.
+     */
+    public synchronized boolean confirmBySource(long id) {
+        try (PreparedStatement ps = connection.prepareStatement(
+                "UPDATE facts SET source = ? WHERE id = ?")) {
+            ps.setString(1, FactSource.CONFIRMED.wireName());
+            ps.setLong(2, id);
+            boolean done = ps.executeUpdate() > 0;
+            if (done) {
+                log.atInfo().addKeyValue("event", "memory.confirmed").addKeyValue("fact_id", id)
+                        .log("Fact {} confirmed by the user", id);
+            }
+            return done;
+        } catch (SQLException e) {
+            throw new MemoryException("Cannot confirm fact " + id, e);
+        }
+    }
+
+    /**
+     * Facts the model picked out of a conversation and nobody has looked at yet, newest first.
+     *
+     * <p>A review queue rather than a notification: a message every few minutes saying "я запомнил
+     * ещё три вещи" is noise that gets muted, and a muted channel collects no signal at all. This
+     * waits in the menu and drains when the user feels like draining it.
+     */
+    public synchronized List<Fact> unreviewedFacts(int limit) {
+        try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT * FROM facts WHERE superseded_at IS NULL AND source = ? ORDER BY id DESC LIMIT ?")) {
+            ps.setString(1, FactSource.EXTRACTED.wireName());
+            ps.setInt(2, Math.max(1, limit));
+            return readFacts(ps);
+        } catch (SQLException e) {
+            throw new MemoryException("Cannot read unreviewed facts", e);
+        }
+    }
+
+    public synchronized int countUnreviewed() {
+        try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT COUNT(*) FROM facts WHERE superseded_at IS NULL AND source = ?")) {
+            ps.setString(1, FactSource.EXTRACTED.wireName());
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getInt(1) : 0;
+            }
+        } catch (SQLException e) {
+            throw new MemoryException("Cannot count unreviewed facts", e);
         }
     }
 
@@ -780,7 +921,9 @@ public final class MemoryStore implements AutoCloseable {
                 supersededAt == null ? null : Instant.parse(supersededAt),
                 rs.getInt("mention_count"),
                 rs.getInt("used_count"),
-                lastUsed == null ? null : Instant.parse(lastUsed));
+                lastUsed == null ? null : Instant.parse(lastUsed),
+                FactSource.fromWire(rs.getString("source")),
+                splitAliases(rs.getString("keywords")));
     }
 
     private List<Fact> readFacts(PreparedStatement ps) throws SQLException {

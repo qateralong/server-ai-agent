@@ -155,6 +155,92 @@ class MemoryLifecycleTest {
     }
 
     /**
+     * "Саша и Лена женаты" is one fact about two people, and nothing ever walked that edge:
+     * asking about Саша told the model nothing about Лена, though the link was right there.
+     */
+    @Test
+    void peopleWhoShareAFactCanBeFoundFromEachOther() {
+        try (MemoryStore store = open()) {
+            Entity sasha = store.addEntity("Саша", List.of(), "друг", "");
+            Entity lena = store.addEntity("Лена", List.of(), "жена Саши", "");
+            Entity petr = store.addEntity("Пётр", List.of(), "коллега", "");
+            store.addFact("Саша и Лена женаты", FactCategory.TRAIT, null, null,
+                    List.of(sasha.id(), lena.id()));
+            store.addFact("Пётр ведёт проект", FactCategory.TRAIT, null, null, List.of(petr.id()));
+
+            List<Entity> related = store.relatedEntities(sasha.id(), 5);
+
+            assertEquals(List.of(lena.id()), related.stream().map(Entity::id).toList());
+            assertTrue(store.relatedEntities(petr.id(), 5).isEmpty(),
+                    "sharing no fact with anybody means no neighbours");
+        }
+    }
+
+    @Test
+    void aSupersededFactStopsConnectingPeople() {
+        try (MemoryStore store = open()) {
+            Entity sasha = store.addEntity("Саша", List.of(), "друг", "");
+            Entity lena = store.addEntity("Лена", List.of(), "", "");
+            Fact married = store.addFact("Саша и Лена женаты", FactCategory.TRAIT, null, null,
+                    List.of(sasha.id(), lena.id()));
+
+            store.supersede(married.id(), null, "развелись");
+
+            assertTrue(store.relatedEntities(sasha.id(), 5).isEmpty(),
+                    "a connection the agent no longer believes in is not a connection");
+        }
+    }
+
+    /**
+     * The review queue: what the model decided to remember on its own and nobody has checked.
+     * A pull, not a push -- a notification every few minutes gets muted, and a muted channel
+     * collects no signal at all.
+     */
+    @Test
+    void onlyWhatTheModelDecidedByItselfWaitsForReview() {
+        try (MemoryStore store = open()) {
+            Fact guessed = store.addFact("Пользователь любит кофе", FactCategory.PREFERENCE, null, null,
+                    List.of(), FactSource.EXTRACTED, List.of());
+            store.addFact("Пользователь просил отвечать коротко", FactCategory.PREFERENCE, null, null,
+                    List.of(), FactSource.STATED, List.of());
+
+            assertEquals(1, store.countUnreviewed());
+            assertEquals(List.of(guessed.id()),
+                    store.unreviewedFacts(10).stream().map(Fact::id).toList());
+
+            assertTrue(store.confirmBySource(guessed.id()));
+            assertEquals(0, store.countUnreviewed(), "the queue drains as it is reviewed");
+            assertEquals(FactSource.CONFIRMED, store.fact(guessed.id()).orElseThrow().source());
+        }
+    }
+
+    @Test
+    void aRetractedFactLeavesTheReviewQueueToo() {
+        try (MemoryStore store = open()) {
+            Fact wrong = store.addFact("Пользователь курит", FactCategory.TRAIT, null, null, List.of());
+
+            store.supersede(wrong.id(), null, "rejected on review");
+
+            assertEquals(0, store.countUnreviewed());
+            assertTrue(store.fact(wrong.id()).isPresent(), "rejecting is a verdict, not an erasure");
+        }
+    }
+
+    @Test
+    void keywordsAreStoredAndSearchableButDoNotChangeTheFactItself() {
+        try (MemoryStore store = open()) {
+            Fact fact = store.addFact("Саша не ест мясо", FactCategory.PREFERENCE, null, null,
+                    List.of(), FactSource.EXTRACTED, List.of("вегетарианец", "питание"));
+
+            Fact fresh = store.fact(fact.id()).orElseThrow();
+            assertEquals(List.of("вегетарианец", "питание"), fresh.keywords());
+            assertEquals("Саша не ест мясо", fresh.text());
+            assertTrue(fresh.searchText().contains("вегетарианец"));
+            assertEquals("Саша не ест мясо", fresh.display(), "the user is shown the fact, not its index");
+        }
+    }
+
+    /**
      * Closing is where a conversation has to be turned into something that outlives it, and the
      * store cannot do that itself -- it knows nothing about the model.
      */

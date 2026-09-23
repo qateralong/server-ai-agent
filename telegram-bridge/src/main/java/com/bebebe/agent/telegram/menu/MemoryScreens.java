@@ -26,17 +26,81 @@ public final class MemoryScreens {
 
                 👥 People: %d
                 📌 Facts: %d
+                🆕 Not reviewed yet: %d
                 💬 Messages in session logs: %d
 
                 <i>People and facts are extracted from the conversation automatically, \
                 every few messages and when the agent is switched off.</i>""").formatted(
                 MenuSection.MEMORY.title(),
-                memory.countEntities(), memory.countFacts(), memory.countMessages());
+                memory.countEntities(), memory.countFacts(), memory.countUnreviewed(),
+                memory.countMessages());
 
-        return new MenuScreen(MenuSection.MEMORY, text, InlineKeyboardMarkup.of(List.of(
-                List.of(InlineKeyboardButton.of("👥 People", CallbackData.memoryPeople(0).encode())),
-                List.of(InlineKeyboardButton.of("🗑 Forget", CallbackData.memoryForget().encode())),
-                navigationRow())));
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+        rows.add(List.of(InlineKeyboardButton.of("👥 People", CallbackData.memoryPeople(0).encode())));
+        int unreviewed = memory.countUnreviewed();
+        if (unreviewed > 0) {
+
+            // Only when there is something to review: a button that always says zero teaches
+            // people to stop reading it.
+            rows.add(List.of(InlineKeyboardButton.of("🆕 Review (" + unreviewed + ")",
+                    CallbackData.memoryReview(0).encode())));
+        }
+        rows.add(List.of(InlineKeyboardButton.of("🗑 Forget", CallbackData.memoryForget().encode())));
+        rows.add(navigationRow());
+        return new MenuScreen(MenuSection.MEMORY, text, InlineKeyboardMarkup.of(rows));
+    }
+
+    /**
+     * Facts nobody has checked, with a verdict button each.
+     *
+     * <p>The cheapest high-quality signal memory can get: everything else it knows about a fact is
+     * either the model's own judgement or a count of how often the fact got reused. "✅ верно"
+     * marks it confirmed for good; "🚫 неверно" retracts it -- a rejected extraction is a
+     * judgement, not a request to erase, so it stays in the history (unlike the bin on a person's
+     * card, which really does delete).
+     */
+    public static MenuScreen review(List<Fact> facts, int page) {
+        if (facts.isEmpty()) {
+            return new MenuScreen(MenuSection.MEMORY, Messages.t("""
+                    <b>🆕 Review</b>
+
+                    Nothing to review: everything remembered has been checked."""),
+                    InlineKeyboardMarkup.of(List.of(backRow(CallbackData.section(MenuSection.MEMORY)))));
+        }
+
+        int pages = (facts.size() + FACTS_PAGE_SIZE - 1) / FACTS_PAGE_SIZE;
+        int current = Math.max(0, Math.min(page, pages - 1));
+        int from = current * FACTS_PAGE_SIZE;
+        List<Fact> shown = facts.subList(from, Math.min(from + FACTS_PAGE_SIZE, facts.size()));
+
+        StringBuilder text = new StringBuilder(Messages.t("""
+                <b>🆕 Review</b>
+
+                The agent picked these out of the conversation by itself. Confirm what is right \
+                -- a confirmed fact is trusted more and shown to the model first.
+
+                """));
+        for (int i = 0; i < shown.size(); i++) {
+            text.append(from + i + 1).append(". ")
+                    .append(TelegramApi.escapeHtml(shown.get(i).display()))
+                    .append(" <i>[").append(shown.get(i).category().title()).append("]</i>\n");
+        }
+
+        List<List<InlineKeyboardButton>> rows = new ArrayList<>();
+        for (int i = 0; i < shown.size(); i++) {
+            Fact fact = shown.get(i);
+            rows.add(List.of(
+                    InlineKeyboardButton.of("✅ " + (from + i + 1),
+                            CallbackData.memoryFactConfirm(fact.id(), current).encode()),
+                    InlineKeyboardButton.of("🚫 " + (from + i + 1),
+                            CallbackData.memoryFactRetract(fact.id(), current).encode())));
+        }
+        if (pages > 1) {
+            rows.add(pager(current, pages, CallbackData::memoryReview));
+        }
+        rows.add(backRow(CallbackData.section(MenuSection.MEMORY)));
+
+        return new MenuScreen(MenuSection.MEMORY, text.toString(), InlineKeyboardMarkup.of(rows));
     }
 
     public static MenuScreen people(List<Entity> all, int page) {

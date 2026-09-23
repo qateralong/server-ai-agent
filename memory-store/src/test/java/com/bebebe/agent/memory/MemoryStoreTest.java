@@ -53,12 +53,20 @@ class MemoryStoreTest {
         assertTrue(again.isActive());
     }
 
+    /**
+     * Asking out loud and following up by text is one conversation, not two. The agent answers
+     * both into the same chat, so the user sees a single stream -- and the agent used to keep two
+     * logs and fail to understand "а теперь на английский" about something said a minute earlier.
+     */
     @Test
-    void sessionsOfDifferentConversationsAreIndependent() {
-        DialogSession a = store.openOrContinue("TELEGRAM:1");
-        DialogSession b = store.openOrContinue("VOICE:-");
+    void voiceAndChatAreOneConversation() {
+        DialogSession byVoice = store.openOrContinue("VOICE:-");
+        DialogSession byText = store.openOrContinue("TELEGRAM:1");
 
-        assertNotEquals(a.id(), b.id());
+        assertEquals(byVoice.id(), byText.id());
+        assertEquals("TELEGRAM:1", byText.conversationKey(),
+                "the session follows the channel the user last spoke through, so replies go where they are");
+        assertEquals(1, store.activeSessions().size());
     }
 
     @Test
@@ -103,11 +111,13 @@ class MemoryStoreTest {
     @Test
     void activeSessionsAreVisibleForConsolidationOnStop() {
         store.openOrContinue("TELEGRAM:1");
-        DialogSession voice = store.openOrContinue("VOICE:-");
-        store.endSession(voice.id());
+        store.append(store.activeSession().orElseThrow().id(), MessageRole.USER, "привет", "T", null);
 
         assertEquals(1, store.activeSessions().size());
         assertEquals("TELEGRAM:1", store.activeSessions().getFirst().conversationKey());
+
+        store.endSession(store.activeSessions().getFirst().id());
+        assertTrue(store.activeSessions().isEmpty());
     }
 
     @Test

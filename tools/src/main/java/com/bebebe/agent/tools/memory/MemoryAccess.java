@@ -27,8 +27,9 @@ public interface MemoryAccess {
      * @param category one of the wire names of a fact category; anything unknown becomes "event"
      * @param about    names of the people the fact is about; empty means it is about the user
      * @param replaces the fact this one supersedes, or 0
+     * @param keywords other words a later question about this might use; may be empty
      */
-    Outcome remember(String text, String category, List<String> about, long replaces);
+    Outcome remember(String text, String category, List<String> about, long replaces, List<String> keywords);
 
     Outcome forget(long factId, String reason);
 

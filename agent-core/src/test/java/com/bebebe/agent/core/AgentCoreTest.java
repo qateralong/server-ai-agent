@@ -228,6 +228,31 @@ class AgentCoreTest {
         assertTrue(fixRequest.contains("сломано"));
     }
 
+    /**
+     * Working memory of the request in hand. The second fix used to look exactly like the first
+     * one from inside -- the model saw the code that had just failed and nothing else -- so it
+     * cheerfully proposed again the approach it had proposed two rounds earlier, at a call from
+     * the budget each time.
+     */
+    @Test
+    void theFixPromptSaysWhatHasAlreadyBeenTriedInThisRequest() {
+        stub.enqueueScript("raise ValueError('первая попытка')");
+        stub.enqueueScript("raise ValueError('вторая попытка')");
+        stub.enqueueScript("print('наконец')");
+        stub.enqueuePlain("Готово.");
+
+        assertEquals("Готово.", runThrough(core(), "сделай что-нибудь"));
+
+        String firstFix = stub.requests().get(1).toString();
+        assertFalse(firstFix.contains("Already tried"),
+                "nothing has failed twice yet -- the first fix prompt stays as it was");
+
+        String secondFix = stub.requests().get(2).toString();
+        assertTrue(secondFix.contains("Already tried"), secondFix);
+        assertTrue(secondFix.contains("первая попытка"),
+                "the fix that already failed has to be in front of the model: " + secondFix);
+    }
+
     @Test
     void modelMayGiveUpWithTextInsteadOfFix() {
         stub.enqueueScript("raise RuntimeError('никак')");

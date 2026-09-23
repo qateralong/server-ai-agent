@@ -379,7 +379,9 @@ public final class AgentCore {
                 reminders.bindConversation(replyConversationKey(message));
             }
             try {
-                AgentReply reply = guarded(budget, () -> loop(message, decide(message, session, budget), budget, 0));
+                TaskAttempts attempts = new TaskAttempts();
+                AgentReply reply = guarded(budget,
+                        () -> loop(message, decide(message, session, budget), budget, 0, null, attempts));
                 afterReply(message, session, reply);
                 return reply;
             } finally {
@@ -457,8 +459,10 @@ public final class AgentCore {
             }
 
             AgentReply reply = guarded(pending.budget(), () -> {
-                Step step = runOnce(pending.message(), pending.script(), pending.code(), pending.budget());
-                return continueFrom(pending.message(), step, pending.budget(), 1, pending.script());
+                Step step = runOnce(pending.message(), pending.script(), pending.code(), pending.budget(),
+                        pending.attempts());
+                return continueFrom(pending.message(), step, pending.budget(), 1, pending.script(),
+                        pending.attempts());
             });
             memory.activeSession(conversationKey(pending.message()))
                     .ifPresent(session -> afterReply(pending.message(), session, reply));
@@ -522,12 +526,8 @@ public final class AgentCore {
         }
     }
 
-    private AgentReply loop(UserMessage message, AgentDecision decision, RequestBudget budget, int attempt) {
-        return loop(message, decision, budget, attempt, null);
-    }
-
     private AgentReply loop(UserMessage message, AgentDecision decision, RequestBudget budget, int attempt,
-                            ScriptEntry failed) {
+                            ScriptEntry failed, TaskAttempts attempts) {
         AgentDecision current = decision;
         int fixAttempt = attempt;
         ScriptEntry lastFailed = failed;
@@ -568,7 +568,7 @@ public final class AgentCore {
             String code = library.codeOf(script).orElse(current.pythonCode());
 
             if (script.requiresConfirmation() && fixAttempt == 0) {
-                String token = confirmations.put(message, script, code, budget);
+                String token = confirmations.put(message, script, code, budget, attempts);
                 log.atInfo()
                         .addKeyValue("event", "confirmation.requested")
                         .addKeyValue("script_id", script.id())
@@ -577,7 +577,7 @@ public final class AgentCore {
                 return new AgentReply.NeedsConfirmation(token, script, describe(script, current));
             }
 
-            Step step = runOnce(message, script, code, budget);
+            Step step = runOnce(message, script, code, budget, attempts);
             if (step instanceof Step.Done done) {
                 return done.reply();
             }
@@ -587,19 +587,16 @@ public final class AgentCore {
         }
     }
 
-    private AgentReply continueFrom(UserMessage message, Step step, RequestBudget budget, int attempt) {
-        return continueFrom(message, step, budget, attempt, null);
-    }
-
     private AgentReply continueFrom(UserMessage message, Step step, RequestBudget budget, int attempt,
-                                    ScriptEntry failed) {
+                                    ScriptEntry failed, TaskAttempts attempts) {
         if (step instanceof Step.Done done) {
             return done.reply();
         }
-        return loop(message, ((Step.Retry) step).decision(), budget, attempt, failed);
+        return loop(message, ((Step.Retry) step).decision(), budget, attempt, failed, attempts);
     }
 
-    private Step runOnce(UserMessage message, ScriptEntry script, String code, RequestBudget budget) {
+    private Step runOnce(UserMessage message, ScriptEntry script, String code, RequestBudget budget,
+                         TaskAttempts attempts) {
         ActionResult result;
 
         try (AutoCloseable busy = activity.busy("script '" + script.displayName() + "'", scripts.timeout())) {
@@ -633,13 +630,26 @@ public final class AgentCore {
                     .log("Script '{}' failed to launch: {}", script.displayName(), result.stderr());
             return new Step.Done(replyFromText("Не удалось выполнить действие: " + result.stderr().strip()));
         }
-        log.info("Script '{}' failed (exit={}), asking the model to fix it",
-                script.displayName(), result.isTimeout() ? "timeout" : result.exitCode());
+        // Read before recording: "already tried" means the rounds before this one. What has just
+        // failed is right above it in the prompt, as the code and the error it produced.
+        String alreadyTried = attempts.describeForModel();
+        int attemptNumber = attempts.size() + 1;
+        attempts.record(script.displayName() + " v" + script.version(),
+                result.isTimeout() ? "timeout" : result.stderr());
+
+        log.atInfo()
+                .addKeyValue("event", "task.attempt_failed")
+                .addKeyValue("script_id", script.id())
+                .addKeyValue("attempts", attempts.size())
+                .log("Script '{}' failed (exit={}), asking the model to fix it (attempt {})",
+                        script.displayName(), result.isTimeout() ? "timeout" : result.exitCode(),
+                        attemptNumber);
         budget.spend("script fix");
 
         LlmResponse response = ask(
                 DecisionProtocol.decisionPrompt(tools, scriptsAllowed()) + personaBlock(),
-                DecisionProtocol.fixPrompt(message.text(), code, result.describeForModel(), 1),
+                DecisionProtocol.fixPrompt(message.text(), code, result.describeForModel(),
+                        attemptNumber, alreadyTried),
                 true);
         AgentDecision fixed = AgentDecision.parse(response.text(), MAPPER);
         log.atInfo()

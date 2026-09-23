@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -40,7 +41,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li><b>recall</b> -- the expected fact was offered. Questions that the lexical approach cannot
  *       answer are listed separately, as known blind spots: they are printed, counted, and left
  *       out of the floor, because pretending they pass would hide exactly what a semantic index
- *       would be for.
+ *       would be for. Keywords stored with a fact shrank that list but did not empty it, and the
+ *       two that remain say precisely where the wall is.
  *   <li><b>noise</b> -- how many facts were offered in total. The whole point of ranking is that
  *       the prompt grows with the question, not with the size of memory.
  * </ul>
@@ -50,7 +52,7 @@ class MemoryEvalTest {
     /** Recall over the questions the lexical selection is supposed to handle. */
     private static final double RECALL_FLOOR = 1.0;
 
-    /** Facts per question, averaged. Memory here holds 20; a selection that offers most of it is broken. */
+    /** Facts per question, averaged. Memory here holds 22; a selection that offers most of it is broken. */
     private static final double NOISE_CEILING = 12.0;
 
     @TempDir
@@ -83,19 +85,29 @@ class MemoryEvalTest {
         aboutUser("Пользователь копит на велосипед", FactCategory.EVENT);
         aboutUser("Пользователь смотрел фильм «Дюна»", FactCategory.EVENT);
         aboutUser("Пользователь купил механическую клавиатуру", FactCategory.EVENT);
+        keywords("У пользователя аллергия на орехи", "здоровье", "нельзя", "продукты");
         aboutUser("Перед стримом: включить OBS, проверить свет, запустить обратный отсчёт",
                 FactCategory.PROCEDURE);
         aboutUser("Перед релизом: прогнать тесты, поставить тег, дождаться CI", FactCategory.PROCEDURE);
 
         long sasha = memory.addEntity("Саша", List.of("Александр"), "друг", "").id();
         about(sasha, "Саша не ест мясо", FactCategory.PREFERENCE);
+        keywords("Саша не ест мясо", "вегетарианец", "питание", "еда", "ужин");
         about(sasha, "Саша живёт в Питере", FactCategory.TRAIT);
+
+        // Left without keywords on purpose: the blind spot below is about what happens when the
+        // model did not think of the word the question will use.
         about(sasha, "Саша играет на гитаре", FactCategory.TRAIT);
         about(sasha, "У Саши день рождения 12 марта", FactCategory.TRAIT);
 
         long marina = memory.addEntity("Марина", List.of(), "сестра", "").id();
         about(marina, "Марина учится на врача", FactCategory.TRAIT);
         about(marina, "Марина боится собак", FactCategory.TRAIT);
+        keywords("Марина боится собак", "животные", "щенок", "страх");
+
+        long lena = memory.addEntity("Лена", List.of(), "жена Саши", "").id();
+        about(lena, "Лена работает дизайнером", FactCategory.TRAIT);
+        both(sasha, lena, "Саша и Лена женаты", FactCategory.TRAIT);
 
         long petr = memory.addEntity("Пётр", List.of(), "коллега", "").id();
         about(petr, "Пётр ведёт проект «Атлас»", FactCategory.TRAIT);
@@ -109,6 +121,21 @@ class MemoryEvalTest {
 
     private void about(long entityId, String text, FactCategory category) {
         facts.put(text, memory.addFact(text, category, null, null, List.of(entityId)).id());
+    }
+
+    private void both(long first, long second, String text, FactCategory category) {
+        facts.put(text, memory.addFact(text, category, null, null, List.of(first, second)).id());
+    }
+
+    /**
+     * The other words a question might use, as extraction would have written them down. Replaces
+     * the fact rather than editing it -- the store has no update, and this is a fixture.
+     */
+    private void keywords(String text, String... words) {
+        Fact old = memory.fact(id(text)).orElseThrow();
+        memory.deleteFact(old.id());
+        facts.put(text, memory.addFact(text, old.category(), null, null, old.entityIds(),
+                com.bebebe.agent.memory.FactSource.EXTRACTED, List.of(words)).id());
     }
 
     private long id(String text) {
@@ -149,11 +176,25 @@ class MemoryEvalTest {
                 new Question("о чём мы договорились созвониться?",
                         id("С Петром договорились созвониться в понедельник"), false),
 
-                // Known blind spots: the question and the fact share no word at all. Only a
-                // semantic index fixes these -- the model can reach them today via the recall
-                // tool, but the automatic selection cannot.
-                new Question("кто из моих знакомых вегетарианец?", id("Саша не ест мясо"), true),
+                // Paraphrases: the question shares no word with the fact itself and is answered
+                // only because extraction wrote down the other words somebody might use.
+                new Question("кто из моих знакомых вегетарианец?", id("Саша не ест мясо"), false),
+                new Question("мне можно арахис?", id("У пользователя аллергия на орехи"), false),
+
+                // The blind spots that are left, and they are different from each other.
+                //
+                // Here the keyword was written down ("щенок") and still does not match the
+                // question ("щенка"): stems are prefixes, and a fleeting vowel makes «щенок» and
+                // «щенка» differ at the fourth letter. Real morphology or vectors would catch it;
+                // cutting stems shorter would make «мясо» and «мясник» the same word.
                 new Question("кому из моих знакомых нельзя дарить щенка?", id("Марина боится собак"), true),
+
+                // And here nobody wrote the keyword down at all. Together these two say what
+                // keywords actually bought: the limit moved from "lexical matching cannot do
+                // this" to "either the model did not think of the word, or the word does not
+                // survive prefix stemming". Better, and still a limit.
+                new Question("кто из моих знакомых музыкант?", id("Саша играет на гитаре"), true),
+
                 new Question("в каком городе я живу?", id("Пользователь живёт в Казани"), false));
     }
 
@@ -269,6 +310,46 @@ class MemoryEvalTest {
         assertTrue(block.contains("в Москве"), block);
         assertTrue(!block.contains("в Казани"),
                 "the model must not have to choose between two answers it was given as equals:\n" + block);
+    }
+
+    /**
+     * "Саша и Лена женаты" was already one fact about two people, but nothing walked that edge:
+     * asking about Саша said nothing about Лена, although the connection was right there.
+     */
+    @Test
+    void aPersonConnectedByASharedFactIsOffered() {
+        MemoryRecall.Selection selection = recall.select("что подарить Саше на годовщину?", Instant.now());
+
+        assertTrue(selection.related().keySet().stream()
+                        .anyMatch(e -> e.canonicalName().equals("Лена")),
+                "Лена shares a fact with Саша and nobody else brings her up: " + selection.related());
+        assertTrue(selection.block().contains("дизайнером"), selection.block());
+    }
+
+    @Test
+    void connectedPeopleDoNotShowUpWhenNobodyWasNamed() {
+        assertTrue(recall.select("какая сегодня погода?", Instant.now()).related().isEmpty(),
+                "one hop across the graph is a nudge from a name, not a background process");
+    }
+
+    /**
+     * What the user said outright outranks what the model decided on its own was worth keeping --
+     * and the model is told which is which, so it does not quote an inference back as a statement.
+     */
+    @Test
+    void whatTheUserSaidOutrightOutranksWhatTheModelInferred() {
+        memory.addFact("Пользователь предпочитает тёмную тему", FactCategory.PREFERENCE, null, null,
+                List.of(), com.bebebe.agent.memory.FactSource.EXTRACTED, List.of("интерфейс"));
+        Fact stated = memory.addFact("Пользователь предпочитает короткие ответы без вступлений",
+                FactCategory.PREFERENCE, null, null, List.of(),
+                com.bebebe.agent.memory.FactSource.STATED, List.of("стиль"));
+
+        List<Fact> ranked = FactRelevance.pick(memory.factsAboutUser(), "предпочитает", Instant.now(), 2);
+
+        assertEquals(stated.id(), ranked.getFirst().id(),
+                ranked.stream().map(Fact::text).toList().toString());
+        assertTrue(stated.describeForModel().contains("[со слов пользователя]"),
+                "and the prompt says where it came from: " + stated.describeForModel());
     }
 
     @Test

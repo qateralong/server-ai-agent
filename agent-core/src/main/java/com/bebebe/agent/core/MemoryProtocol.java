@@ -42,7 +42,8 @@ public final class MemoryProtocol {
                         "enum", java.util.Arrays.stream(FactCategory.values()).map(FactCategory::wireName).toList()),
                 "date", Map.of("type", "string"),
                 "entities", Map.of("type", "array", "items", Map.of("type", "string")),
-                "replaces", Map.of("type", "array", "items", Map.of("type", "integer"))));
+                "replaces", Map.of("type", "array", "items", Map.of("type", "integer")),
+                "keywords", Map.of("type", "array", "items", Map.of("type", "string"))));
         fact.put("required", List.of("text", "category", "entities"));
         fact.put("additionalProperties", false);
 
@@ -106,6 +107,16 @@ public final class MemoryProtocol {
                   * health, restrictions, allergies, things that must not be forgotten;
                   * paths, project names, addresses, accounts they mention in passing;
                   * plans and intentions: what they are going to do, what they are waiting for.
+
+                keywords -- 3-6 other words somebody might use when asking about this fact later,
+                in Russian, one word each, NOT repeating the words already in the text. Recall is
+                by words: "Саша не ест мясо" is found by "мясо" and missed entirely by
+                "вегетарианец", "питание", "еда" -- which is how a question gets asked in real
+                life. Write the synonyms, the general category, and the word for the thing itself:
+                  "Саша не ест мясо"            -> ["вегетарианец", "питание", "еда", "ужин"]
+                  "Марина боится собак"         -> ["животные", "щенок", "страх", "фобия"]
+                  "У пользователя аллергия на орехи" -> ["аллергия", "здоровье", "еда", "нельзя"]
+                Do not write words that are already in the text, and do not pad the list.
 
                 replaces -- the numbers of already known facts that this one makes obsolete. Use it
                 when what you are writing CONTRADICTS or SUPERSEDES something in the list of known
@@ -172,6 +183,15 @@ public final class MemoryProtocol {
         return contextBlock(mentioned, factsByEntity, aboutUser, procedures, recalled, List.of());
     }
 
+    public static String contextBlock(List<Entity> mentioned,
+                                      Map<Entity, List<Fact>> factsByEntity,
+                                      List<Fact> aboutUser,
+                                      List<Fact> procedures,
+                                      List<Fact> recalled,
+                                      List<DialogSession> episodes) {
+        return contextBlock(mentioned, factsByEntity, aboutUser, procedures, recalled, episodes, Map.of());
+    }
+
     /**
      * Everything remembered that is worth showing for this one message.
      *
@@ -185,7 +205,8 @@ public final class MemoryProtocol {
                                       List<Fact> aboutUser,
                                       List<Fact> procedures,
                                       List<Fact> recalled,
-                                      List<DialogSession> episodes) {
+                                      List<DialogSession> episodes,
+                                      Map<Entity, List<Fact>> related) {
         StringBuilder sb = new StringBuilder();
 
         if (!mentioned.isEmpty()) {
@@ -226,6 +247,18 @@ public final class MemoryProtocol {
             }
         }
 
+        if (!related.isEmpty()) {
+
+            // One hop across a shared fact. Offered as a connection, not as the subject: nobody
+            // asked about these people, they simply turned up in the same fact as somebody who
+            // was asked about.
+            sb.append("\nConnected to them:\n");
+            related.forEach((entity, facts) -> {
+                sb.append("  ").append(entity.describeForModel()).append('\n');
+                facts.forEach(fact -> sb.append("    ").append(fact.describeForModel()).append('\n'));
+            });
+        }
+
         if (!episodes.isEmpty()) {
 
             // What is left of conversations that are over. Their logs stopped being context when
@@ -237,9 +270,13 @@ public final class MemoryProtocol {
         }
 
         if (sb.length() > 0) {
-            sb.append("\nUse this when appropriate; do not retell it needlessly. The #N numbers are "
-                    + "internal: never show them to the user, but list in \"used_facts\" the numbers "
-                    + "of the facts you actually relied on for your answer.\n");
+            sb.append("\nUse this when appropriate; do not retell it needlessly. Facts marked "
+                    + "[подтверждено] or [со слов пользователя] are reliable -- the user said or "
+                    + "checked them; the rest were picked out of a conversation by you and may "
+                    + "have been understood wrongly, so lean on them but do not quote them back "
+                    + "as something the user definitely said. The #N numbers are internal: never "
+                    + "show them to the user, but list in \"used_facts\" the numbers of the facts "
+                    + "you actually relied on for your answer.\n");
         }
         return sb.toString();
     }

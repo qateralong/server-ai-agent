@@ -502,6 +502,10 @@ public final class MenuController {
             case "people" -> MenuResponse.show(MemoryScreens.people(
                     memory.entities(), data.arg(1).flatMap(MenuController::parsePage).orElse(0)));
             case "person" -> personCard(data);
+            case "new" -> MenuResponse.show(MemoryScreens.review(
+                    memory.unreviewedFacts(REVIEW_LIMIT), data.arg(1).flatMap(MenuController::parsePage).orElse(0)));
+            case "ok" -> reviewVerdict(data, true);
+            case "no" -> reviewVerdict(data, false);
             case "fdel" -> deleteFact(data);
             case "pdel" -> deletePerson(data);
             case "forget" -> forget(data, conversationKey);
@@ -521,6 +525,28 @@ public final class MenuController {
             return MenuResponse.show(MemoryScreens.people(memory.entities(), 0), "Person not found");
         }
         return MenuResponse.show(MemoryScreens.person(entity.get(), memory.factsOf(entity.get().id()), page));
+    }
+
+    /** How deep the review queue goes; beyond this it is not a queue, it is a backlog. */
+    private static final int REVIEW_LIMIT = 60;
+
+    private MenuResponse reviewVerdict(CallbackData data, boolean right) {
+        Optional<Long> factId = data.arg(1).flatMap(MenuController::parseId);
+        int page = data.arg(2).flatMap(MenuController::parsePage).orElse(0);
+        if (factId.isEmpty()) {
+            return MenuResponse.toast("Unknown button");
+        }
+        String toast;
+        if (right) {
+            toast = memory.confirmBySource(factId.get()) ? "Confirmed" : "Already gone";
+        } else {
+
+            // Retracted, not deleted: a rejected extraction is a judgement about the fact, and
+            // what the agent believed and until when stays readable.
+            toast = memory.supersede(factId.get(), null, "rejected on review")
+                    ? "Will not be used any more" : "Already gone";
+        }
+        return MenuResponse.show(MemoryScreens.review(memory.unreviewedFacts(REVIEW_LIMIT), page), toast);
     }
 
     private MenuResponse deleteFact(CallbackData data) {

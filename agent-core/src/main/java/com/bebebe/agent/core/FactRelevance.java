@@ -59,6 +59,10 @@ final class FactRelevance {
     private static final double PER_USE = 0.5;
     private static final int USES_COUNTED = 4;
 
+    /** The user asked for this to be remembered, or looked at it and said it was right. */
+    private static final double STATED_BY_USER = 1.0;
+    private static final double CONFIRMED_BY_USER = 2.0;
+
     private FactRelevance() {
     }
 
@@ -94,7 +98,7 @@ final class FactRelevance {
         }
         List<Fact> hits = new ArrayList<>();
         for (Fact fact : facts) {
-            if (overlap(stems(fact.text()), query) > 0) {
+            if (overlap(stems(fact.searchText()), query) > 0) {
                 hits.add(fact);
             }
         }
@@ -104,7 +108,10 @@ final class FactRelevance {
     }
 
     static double score(Fact fact, Set<String> query, Instant now) {
-        double score = overlap(stems(fact.text()), query) * 3.0;
+
+        // searchText(), not text(): the keywords written down with the fact are exactly there to
+        // be matched against a question phrased in other words than the fact itself.
+        double score = overlap(stems(fact.searchText()), query) * 3.0;
 
         // A procedure is an instruction the user asked to keep; it stays useful long after the
         // conversation that produced it, so it is never ranked down by age.
@@ -119,6 +126,14 @@ final class FactRelevance {
         // Actually leaned on when answering. The only signal that comes from the memory having
         // worked rather than from guessing which words look relevant.
         score += Math.min(fact.usedCount(), USES_COUNTED) * PER_USE;
+
+        // What the user said outright, and what they have since confirmed, outranks what the
+        // model decided on its own was worth keeping.
+        score += switch (fact.source()) {
+            case CONFIRMED -> CONFIRMED_BY_USER;
+            case STATED -> STATED_BY_USER;
+            case EXTRACTED -> 0.0;
+        };
 
         Instant created = fact.createdAt();
         if (created != null) {

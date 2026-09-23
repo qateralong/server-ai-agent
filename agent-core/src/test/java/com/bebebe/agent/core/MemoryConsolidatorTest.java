@@ -118,6 +118,21 @@ class MemoryConsolidatorTest {
                 "but it has been confirmed twice, and the ranking can see that");
     }
 
+    @Test
+    void extractionWritesDownTheOtherWordsAQuestionMightUse() {
+        stub.enqueue("""
+                {"entities":[],
+                 "facts":[{"text":"Пользователь не ест мясо","category":"preference","date":"",
+                           "entities":[],"keywords":["вегетарианец","питание","мясо"]}]}""");
+
+        consolidator.consolidate(sessionWith("я не ем мясо"));
+
+        Fact stored = memory.factsAboutUser().getFirst();
+        assertEquals(List.of("вегетарианец", "питание"), stored.keywords(),
+                "«мясо» is already in the text -- repeating it only makes the ranking noisier");
+        assertTrue(stored.searchText().contains("вегетарианец"));
+    }
+
     /** What is already remembered has to be shown, or there is nothing for "replaces" to point at. */
     @Test
     void extractionSeesWhatIsAlreadyRemembered() {

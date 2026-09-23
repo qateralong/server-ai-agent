@@ -11,6 +11,7 @@ public record PendingExecution(
         ScriptEntry script,
         String code,
         RequestBudget budget,
+        TaskAttempts attempts,
         Instant expiresAt
 ) {
 

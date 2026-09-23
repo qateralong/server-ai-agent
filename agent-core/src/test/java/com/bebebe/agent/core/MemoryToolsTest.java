@@ -104,6 +104,35 @@ class MemoryToolsTest {
                 "a fact written on request must be in the very next prompt, not after consolidation");
     }
 
+    /**
+     * A fact the user asked for is not the same kind of thing as one the model picked out of a
+     * conversation, and the ranking and the prompt both need to know which is which.
+     */
+    @Test
+    void whatTheUserAskedToRememberIsMarkedAsTheirWords() {
+        remember(Map.of("text", "Пользователь предпочитает короткие ответы", "category", "preference"));
+
+        Fact stored = memory.factsAboutUser().getFirst();
+        assertEquals(com.bebebe.agent.memory.FactSource.STATED, stored.source());
+        assertTrue(stored.describeForModel().contains("[со слов пользователя]"));
+        assertEquals(0, memory.countUnreviewed(),
+                "what the user dictated does not go into the review queue -- they just said it");
+    }
+
+    /**
+     * Recall is lexical, so a fact that can only be found by its own wording is invisible to a
+     * question phrased differently. The words are written down once, when the fact is stored.
+     */
+    @Test
+    void keywordsMakeAFactFindableByOtherWords() {
+        remember(Map.of("text", "Пользователь переехал в Москву", "category", "event",
+                "keywords", List.of("переезд", "город", "жильё")));
+
+        assertTrue(recall.select("когда был переезд?", java.time.Instant.now())
+                        .block().contains("переехал в Москву"),
+                "the question shares no word with the fact -- only with its keywords");
+    }
+
     @Test
     void rememberingAboutSomebodyNewCreatesThePerson() {
         remember(Map.of("text", "Марина держит кота", "category", "trait", "about", List.of("Марина")));

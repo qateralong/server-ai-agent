@@ -266,7 +266,8 @@ public final class MemoryConsolidator {
                         .addKeyValue("fact_id", existing.id())
                         .log("«{}» is already known as «{}» -- counted as a confirmation", text, existing.text());
             } else {
-                Fact added = memory.addFact(text, category, date, sourceId, entityIds);
+                Fact added = memory.addFact(text, category, date, sourceId, entityIds,
+                        com.bebebe.agent.memory.FactSource.EXTRACTED, keywords(node));
                 stored++;
                 superseded += supersede(node, added, shown);
             }
@@ -299,6 +300,33 @@ public final class MemoryConsolidator {
      *
      * @return how many facts stopped being current
      */
+    /**
+     * The other words a question about this fact might use.
+     *
+     * <p>Written down once, here, rather than guessed on every read: recall is lexical, and a
+     * fact that can only be found by its own wording is invisible to anyone who phrases the
+     * question differently. Words already in the text are dropped -- they are found anyway, and
+     * a keyword list that repeats the fact only makes the ranking noisier.
+     */
+    private static List<String> keywords(JsonNode node) {
+        Set<String> inText = FactRelevance.stems(node.path("text").asText(""));
+        List<String> out = new ArrayList<>();
+        for (JsonNode ref : node.path("keywords")) {
+            String word = ref.asText("").strip();
+            if (word.isEmpty() || out.size() >= MAX_KEYWORDS) {
+                continue;
+            }
+            Set<String> stems = FactRelevance.stems(word);
+            if (!stems.isEmpty() && inText.containsAll(stems)) {
+                continue;
+            }
+            out.add(word);
+        }
+        return out;
+    }
+
+    private static final int MAX_KEYWORDS = 8;
+
     private int supersede(JsonNode node, Fact added, Set<Long> shown) {
         int count = 0;
         for (JsonNode ref : node.path("replaces")) {
