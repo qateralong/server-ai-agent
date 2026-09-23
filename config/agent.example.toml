@@ -302,6 +302,12 @@ session_idle_minutes = 60
 # runs immediately regardless of the counter.
 consolidate_every = 6
 
+# How often an active session is consolidated even when the counter above has
+# not been reached, in minutes. 0 -- only by the counter and on shutdown.
+# Without it the tail of a conversation that simply stops -- a hung worker the
+# watchdog restarted, a machine that lost power -- stays unextracted.
+consolidate_minutes = 10
+
 [scheduler]
 # Reminders: the jobs table in a separate SQLite database.
 db_path = "~/.local/share/bebebe-agent/scheduler.db"

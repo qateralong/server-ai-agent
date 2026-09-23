@@ -249,8 +249,28 @@ public final class AgentAssembly implements AutoCloseable {
         return Optional.ofNullable(watchdog);
     }
 
+    /**
+     * Shutting the whole process down, from wherever: the JVM shutdown hook of either entry
+     * point, a SIGTERM from systemd, the window being closed.
+     *
+     * <p>It turns the agent off first, and that is the point. Consolidating memory hangs off
+     * {@code onBeforeStop}, and before this that hook ran <b>only</b> when somebody flipped the
+     * toggle by hand. A restart, a reboot or a {@code systemctl restart} closed the stores and
+     * exited, leaving the tail of the conversation unconsolidated and the session never marked
+     * as ended -- which is exactly what the live database showed: messages, no facts, no
+     * {@code ended_at}.
+     */
     @Override
     public void close() {
+        try {
+            if (agentSwitch.isOn()) {
+                log.info("Shutting down: switching the agent off so the lifecycle hooks run");
+                agentSwitch.turnOff();
+            }
+        } catch (RuntimeException e) {
+
+            log.error("Lifecycle hooks failed while shutting down -- closing anyway", e);
+        }
         for (AutoCloseable c : new AutoCloseable[] {watchdog, updates, stt, telegramVoice, telegram, tts, library, memory, jobs,
                 notes, personas, llm}) {
             if (c == null) {

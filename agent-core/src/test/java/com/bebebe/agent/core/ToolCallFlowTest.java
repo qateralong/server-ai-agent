@@ -29,6 +29,7 @@ import java.time.ZoneId;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -89,6 +90,32 @@ class ToolCallFlowTest {
 
     private static UserMessage ask(String text) {
         return UserMessage.telegram(text, 1L);
+    }
+
+    @Test
+    void anUnreadableDecisionIsAskedAgainBeforeGivingUp() {
+
+        stub.enqueue("Конечно! Вот что я думаю по этому поводу...");
+        stub.enqueue("{\"type\":\"reply\",\"reply\":\"Сегодня среда.\"}");
+
+        AgentReply reply = core(new ToolRegistry(), 15).handle(ask("какой сегодня день?"));
+
+        assertEquals("Сегодня среда.", reply.asPlainText());
+        assertEquals(2, stub.callCount(), "one reminder of the format, not more");
+    }
+
+    @Test
+    void anUnreadableDecisionTwiceGivesANeutralAnswerAndNeverTheRawText() {
+
+        stub.enqueue("{\"тип\":\"ответ\"} и ещё немного текста");
+        stub.enqueue("I refuse to answer in JSON.");
+
+        AgentReply reply = core(new ToolRegistry(), 15).handle(ask("что-нибудь"));
+
+        String text = reply.asPlainText();
+        assertFalse(text.contains("тип"), "the model's raw answer must not reach the user: " + text);
+        assertFalse(text.contains("I refuse"), "nor the second one: " + text);
+        assertFalse(text.isBlank());
     }
 
     @Test

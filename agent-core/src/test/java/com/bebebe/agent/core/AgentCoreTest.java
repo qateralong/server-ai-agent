@@ -286,20 +286,26 @@ class AgentCoreTest {
     }
 
     @Test
-    void unknownDecisionDoesNotLoop() {
+    void unknownDecisionIsRetriedOnceAndThenGivenUpOn() {
+
         stub.enqueue("{\"type\":\"нечто-новое\"}");
+        stub.enqueue("{\"type\":\"и снова нечто-новое\"}");
 
         String answer = textOf(core().handle(ask("вопрос")));
 
         assertTrue(answer.contains("Не разобрался"), answer);
-        assertEquals(1, stub.callCount());
+        assertEquals(2, stub.callCount(), "exactly one reminder of the format, then stop");
     }
 
     @Test
-    void garbageInsteadOfJsonDoesNotCrashAgent() {
+    void garbageInsteadOfJsonNeverReachesTheUser() {
         stub.enqueue("я не умею в JSON");
+        stub.enqueue("и во второй раз не умею");
 
-        assertTrue(textOf(core().handle(ask("вопрос"))).contains("Не разобрался"));
+        String answer = textOf(core().handle(ask("вопрос")));
+
+        assertTrue(answer.contains("Не разобрался"), answer);
+        assertFalse(answer.contains("не умею"), "the raw answer must stay in the log: " + answer);
     }
 
     @Test

@@ -59,6 +59,7 @@ public final class AgentCore {
     private final EntityResolver entityResolver;
     private final ToolRegistry tools;
     private final ReminderService reminders;
+    private final PeriodicConsolidation sweeper = new PeriodicConsolidation();
 
     /** Kept for the "Now:" block of the prompt: its zone is the user's, not the machine's. */
     private final java.time.Clock clock;
@@ -258,6 +259,7 @@ public final class AgentCore {
 
     private String replySystemPrompt() {
         return "You are a personal AI agent. Answer briefly, in Russian."
+                + DecisionProtocol.confidentialityBlock()
                 + (live() ? DecisionProtocol.liveFreeTextHint() : "") + personaBlock();
     }
 
@@ -475,8 +477,11 @@ public final class AgentCore {
             log.warn("Budget exhausted after {} calls: {}", budget.used(), budget.spentOn());
             return AgentReply.text(DecisionProtocol.budgetExhaustedMessage(budget));
         } catch (LlmException e) {
-            log.error("Model unavailable: {}", e.getMessage());
-            return AgentReply.text("Не получилось обратиться к модели: " + e.getMessage());
+
+            // The message carries an endpoint, an HTTP code and sometimes the provider's own
+            // wording -- diagnostics for the log, not an answer for the user.
+            log.error("Model unavailable: {}", e.getMessage(), e);
+            return AgentReply.text(DecisionProtocol.modelUnavailableMessage());
         } finally {
             log.atInfo()
                     .addKeyValue("event", "request.end")
@@ -677,11 +682,12 @@ public final class AgentCore {
                     .log("Model did not follow the no-scripts protocol ({}) -- asking for a plain answer", decision.type());
             decision = plainReply(message, history, budget);
         }
-        if (decision.type() == DecisionType.UNKNOWN) {
+        if (!decision.isUsable() && scripts) {
 
-            String raw = response.text();
-            log.warn("Model returned an unparseable decision: {}",
-                    raw.length() > 600 ? raw.substring(0, 600) + "…" : raw);
+            // One reminder of the format, and only then give up. Before this the loop went
+            // straight to "не разобрался" -- and any path that instead forwarded the raw text
+            // put the protocol JSON in front of the user.
+            decision = retryWithFormatReminder(system, history, userBlock, response.text(), budget);
         }
         log.atInfo()
                 .addKeyValue("event", "decision")
@@ -691,6 +697,43 @@ public final class AgentCore {
                 .addKeyValue("model", response.model())
                 .log("Model decision: {}", decision);
         return decision;
+    }
+
+    /**
+     * Asks once more, saying plainly what was wrong with the previous answer.
+     *
+     * <p>The raw answer is quoted back to the model and written to the log, and it goes nowhere
+     * else: whatever the model produced when it ignored the protocol is internal by definition.
+     *
+     * @return a usable decision, or {@link AgentDecision#unknown()} -- which the loop turns into
+     *         a neutral sentence
+     */
+    private AgentDecision retryWithFormatReminder(String system, List<LlmMessage> history,
+                                                  String userBlock, String rawAnswer,
+                                                  RequestBudget budget) {
+        log.atWarn()
+                .addKeyValue("event", "decision.unparsed")
+                .addKeyValue("answer", rawAnswer)
+                .log("Model returned a decision that cannot be read -- asking again with the format spelled out");
+
+        if (!budget.trySpend("decision format reminder")) {
+            log.warn("No budget left for a second attempt at the decision");
+            return AgentDecision.unknown();
+        }
+        LlmResponse retry = askStructured(system, history,
+                userBlock + "\n\n" + DecisionProtocol.formatReminderPrompt(rawAnswer), true);
+        AgentDecision second = AgentDecision.parse(retry.text(), MAPPER);
+        if (second.isUsable()) {
+            log.atInfo().addKeyValue("event", "decision.reparsed")
+                    .addKeyValue("type", second.type().name())
+                    .log("The second attempt was readable: {}", second.type());
+            return second;
+        }
+        log.atWarn()
+                .addKeyValue("event", "decision.unparsed_twice")
+                .addKeyValue("answer", retry.text())
+                .log("The second attempt could not be read either -- answering neutrally");
+        return AgentDecision.unknown();
     }
 
     private String summarize(UserMessage message, ActionResult result, RequestBudget budget) {
@@ -776,8 +819,13 @@ public final class AgentCore {
         }
 
         if (!budget.trySpend("answer formulation from tool result")) {
-            log.warn("No budget left for formulation, returning the tool result as is");
-            return AgentReply.text(result.describeForModel());
+
+            // describeForModel() is written for the model -- labels, truncation marks, error
+            // text -- so it goes to the log, and the user gets the honest neutral sentence.
+            log.atWarn().addKeyValue("event", "tool.unformulated")
+                    .addKeyValue("result", result.describeForModel())
+                    .log("No budget left to formulate an answer from the tool result");
+            return AgentReply.text(DecisionProtocol.budgetExhaustedMessage(budget));
         }
         LlmResponse response = ask(
                 replySystemPrompt(),
@@ -785,7 +833,13 @@ public final class AgentCore {
                 false);
         String text = response.text().strip();
         log.atInfo().addKeyValue("event", "reply.ready").addKeyValue("length", text.length()).log("Answer formulated");
-        return text.isEmpty() ? AgentReply.text(result.describeForModel()) : replyFromText(text);
+        if (text.isEmpty()) {
+            log.atWarn().addKeyValue("event", "tool.unformulated")
+                    .addKeyValue("result", result.describeForModel())
+                    .log("The model returned an empty answer for the tool result");
+            return AgentReply.text(LeakGuard.neutralReply());
+        }
+        return replyFromText(text);
     }
 
     private static final int RESERVED_FOR_REPLY = 1;
@@ -831,11 +885,24 @@ public final class AgentCore {
         return history;
     }
 
+    /**
+     * How many facts of one kind may reach the prompt. Past this the ranking decides; the rest
+     * stays in the database and is still visible in 🧠 Memory -- it is dropped from one prompt,
+     * not forgotten.
+     */
+    static final int FACTS_PER_ENTITY = 8;
+
+    static final int FACTS_ABOUT_USER = 10;
+
+    static final int PROCEDURES = 12;
+
     private String memoryContext(UserMessage message) {
         List<Entity> mentioned = entityResolver.resolve(message.text());
+        java.time.Instant now = clock.instant();
         Map<Entity, List<Fact>> facts = new LinkedHashMap<>();
         for (Entity entity : mentioned) {
-            facts.put(entity, memory.factsOf(entity.id()));
+            facts.put(entity, FactRelevance.pick(
+                    memory.factsOf(entity.id()), message.text(), now, FACTS_PER_ENTITY));
         }
         if (!mentioned.isEmpty()) {
             log.atInfo()
@@ -843,8 +910,86 @@ public final class AgentCore {
                     .addKeyValue("entities", mentioned.stream().map(Entity::canonicalName).toList().toString())
                     .log("Mentioned: {}", mentioned.stream().map(Entity::canonicalName).toList());
         }
-        return MemoryProtocol.contextBlock(
-                mentioned, facts, memory.factsAboutUser(), memory.factsByCategory(FactCategory.PROCEDURE));
+        return MemoryProtocol.contextBlock(mentioned, facts,
+                FactRelevance.pick(memory.factsAboutUser(), message.text(), now, FACTS_ABOUT_USER),
+                FactRelevance.pick(memory.factsByCategory(FactCategory.PROCEDURE),
+                        message.text(), now, PROCEDURES));
+    }
+
+    /**
+     * Consolidation on a timer, on top of the message counter.
+     *
+     * <p>The counter only fires while the conversation keeps going: the tail of a conversation
+     * that simply stops -- the user walked away, the worker hung and the watchdog restarted it,
+     * the machine lost power -- waited for {@code onBeforeStop} and was lost with it whenever the
+     * process did not stop cleanly. A few minutes of idle memory is cheap; a whole evening of
+     * conversation is not.
+     */
+    private final class PeriodicConsolidation implements AutoCloseable {
+
+        private final java.util.concurrent.ScheduledExecutorService timer =
+                java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                    Thread t = new Thread(r, "memory-consolidation");
+                    t.setDaemon(true);
+                    return t;
+                });
+
+        private java.util.concurrent.ScheduledFuture<?> ticking;
+
+        synchronized void start(java.time.Duration every) {
+            if (every.isZero() || ticking != null) {
+                if (every.isZero()) {
+                    log.info("Periodic consolidation is off (memory.consolidate_minutes = 0)");
+                }
+                return;
+            }
+            long seconds = Math.max(30, every.toSeconds());
+            ticking = timer.scheduleWithFixedDelay(this::sweepSafely, seconds, seconds,
+                    java.util.concurrent.TimeUnit.SECONDS);
+            log.info("Periodic consolidation: every {} min", every.toMinutes());
+        }
+
+        /** Stopped before the switch-off hook consolidates, so the two never run at once. */
+        synchronized void pause() {
+            if (ticking != null) {
+                ticking.cancel(false);
+                ticking = null;
+            }
+        }
+
+        private void sweepSafely() {
+            try {
+                sweep();
+            } catch (RuntimeException e) {
+                log.error("Periodic consolidation failed", e);
+            }
+        }
+
+        private void sweep() {
+            if (!agentSwitch.isOn()) {
+                return;
+            }
+            for (DialogSession session : memory.activeSessions()) {
+                DialogSession fresh = memory.session(session.id()).orElse(session);
+                int pending = memory.unconsolidated(fresh).size();
+                if (pending == 0) {
+                    continue;
+                }
+                try (TraceContext.Scope ignored = TraceContext.open("mem-" + fresh.id())) {
+                    log.atInfo()
+                            .addKeyValue("event", "memory.sweep")
+                            .addKeyValue("session_id", fresh.id())
+                            .addKeyValue("messages", pending)
+                            .log("Periodic consolidation of session {}: {} messages", fresh.id(), pending);
+                    deliverQuestions(consolidator.consolidate(fresh), fresh.conversationKey());
+                }
+            }
+        }
+
+        @Override
+        public void close() {
+            timer.shutdownNow();
+        }
     }
 
     private final class MemoryConsolidationHook implements AgentLifecycleHook {
@@ -856,6 +1001,8 @@ public final class AgentCore {
 
         @Override
         public void onBeforeStop() {
+
+            sweeper.pause();
             int active = memory.activeSessions().size();
             if (active == 0) {
                 log.debug("[hook {}] no active sessions", name());
@@ -876,6 +1023,7 @@ public final class AgentCore {
         public void onAfterStart() {
             log.info("[hook {}] memory: {} entities, {} facts",
                     name(), memory.countEntities(), memory.countFacts());
+            sweeper.start(memory.config().consolidateInterval());
         }
     }
 

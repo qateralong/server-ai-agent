@@ -3,6 +3,7 @@ package com.bebebe.agent.core;
 import com.bebebe.agent.memory.DialogMessage;
 import com.bebebe.agent.memory.DialogSession;
 import com.bebebe.agent.memory.Entity;
+import com.bebebe.agent.memory.Fact;
 import com.bebebe.agent.memory.FactCategory;
 import com.bebebe.agent.memory.MemoryStore;
 import com.bebebe.agent.llm.LlmException;
@@ -22,6 +23,7 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Set;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -35,7 +37,17 @@ public final class MemoryConsolidator {
 
     static final int BUDGET_PER_RUN = 2;
 
+    /**
+     * Deliberately high: below this, wordings that share most of their words are usually two
+     * different facts about the same thing ("любит чай" / "любит чай без сахара"), and dropping
+     * the second one would lose the detail.
+     */
+    private static final double DUPLICATE_AT = 0.8;
+
     private final MemoryStore memory;
+
+    /** Session id -> the last tail we already spent a model call on. In memory: a restart may retry. */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Long> attempted = new java.util.concurrent.ConcurrentHashMap<>();
 
     private final java.util.function.Supplier<LlmProvider> llm;
 
@@ -55,8 +67,16 @@ public final class MemoryConsolidator {
         RequestBudget budget = new RequestBudget(BUDGET_PER_RUN);
         long lastId = tail.getLast().id();
 
-        memory.markConsolidated(session.id(), lastId);
+        // Only one attempt per tail: a model that keeps failing must not be asked again on
+        // every single message. The tail itself stays unconsolidated, so the next run -- after
+        // another consolidate_every messages -- picks these messages up again.
+        if (lastId <= attempted.getOrDefault(session.id(), 0L)) {
+            log.debug("Session {}: tail up to {} has already been attempted", session.id(), lastId);
+            return List.of();
+        }
+        attempted.put(session.id(), lastId);
 
+        List<AgentReply.EntityQuestion> questions;
         try {
             budget.spend("fact extraction");
             List<Entity> known = memory.entities();
@@ -65,27 +85,111 @@ public final class MemoryConsolidator {
                     MemoryProtocol.extractionUserPrompt(known, tail), 0.2,
                     MemoryProtocol.extractionSchema()));
 
-            return apply(session, tail, known, response.text());
+            JsonNode root = parse(session, response.text());
+            if (root == null) {
+
+                return List.of();
+            }
+            questions = apply(session, tail, known, root);
         } catch (LlmException e) {
-            log.warn("Consolidation of session {} failed: {}", session.id(), e.getMessage());
+
+            log.warn("Consolidation of session {} failed: {} -- the messages are kept for the next run",
+                    session.id(), e.getMessage());
             return List.of();
         } catch (RuntimeException e) {
-            log.error("Error consolidating session {}", session.id(), e);
+            log.error("Error consolidating session {} -- the messages are kept for the next run",
+                    session.id(), e);
             return List.of();
         }
+
+        // Marked only now, and only because the answer was understood. Marking before the call
+        // is what silently destroyed memory: a model answering in fenced JSON burned every
+        // message it was given and left nothing but a WARN behind.
+        memory.markConsolidated(session.id(), lastId);
+        return questions;
+    }
+
+    /**
+     * @return the extraction object, or null when the model did not answer with one. Tolerant in
+     *         the same way {@link AgentDecision} is: a model without strict structured output
+     *         likes to wrap its JSON in ``` fences, and a bare readTree simply failed on that.
+     */
+    private JsonNode parse(DialogSession session, String json) {
+        JsonNode root;
+        try {
+            root = MAPPER.readTree(AgentDecision.stripFences(json));
+        } catch (Exception e) {
+            root = null;
+        }
+        if (root != null && root.isObject()) {
+            return root;
+        }
+
+        // Logged with the answer itself: without it this failure was a single unexplained line,
+        // and it is why memory quietly stayed empty for days.
+        log.atWarn()
+                .addKeyValue("event", "memory.unparsed")
+                .addKeyValue("session_id", session.id())
+                .addKeyValue("answer", cut(json))
+                .log("Fact extraction did not return a JSON object -- nothing extracted, "
+                        + "the messages are kept for the next run: {}", cut(json));
+        return null;
+    }
+
+    /**
+     * The same fact said twice in slightly different words. Extraction runs on overlapping tails
+     * and on a rephrased conversation, so "Саша не ест мясо" and "Саша не ест мяса" would
+     * otherwise pile up as two facts and both go into the prompt.
+     *
+     * <p>Compared lexically, not by asking the model: a comparison per fact per run costs money
+     * on background work, and a wrong "yes" from the model silently loses a real new fact. This
+     * only catches near-identical wording -- contradictions ("переехал в Москву" after "живёт в
+     * Казани") are a different problem and are still in the backlog.
+     *
+     * @return the fact it duplicates, or null
+     */
+    private Fact duplicateOf(String text, List<Long> entityIds) {
+        List<Fact> neighbours = entityIds.isEmpty()
+                ? memory.factsAboutUser()
+                : memory.factsOf(entityIds.getFirst());
+        Set<String> words = FactRelevance.stems(text);
+        if (words.isEmpty()) {
+            return null;
+        }
+        for (Fact existing : neighbours) {
+            if (similarity(words, FactRelevance.stems(existing.text())) >= DUPLICATE_AT) {
+                return existing;
+            }
+        }
+        return null;
+    }
+
+    /** Jaccard over stems: shared words divided by all words seen in either. */
+    private static double similarity(Set<String> a, Set<String> b) {
+        if (a.isEmpty() || b.isEmpty()) {
+            return 0;
+        }
+        int shared = 0;
+        for (String word : a) {
+            if (b.contains(word)) {
+                shared++;
+            }
+        }
+        return (double) shared / (a.size() + b.size() - shared);
+    }
+
+    private static String cut(String text) {
+        if (text == null) {
+            return "<null>";
+        }
+        String one = text.strip().replace('\n', ' ');
+        return one.length() <= 300 ? one : one.substring(0, 300) + "…";
     }
 
     private List<AgentReply.EntityQuestion> apply(DialogSession session,
                                                   List<DialogMessage> tail,
                                                   List<Entity> known,
-                                                  String json) {
-        JsonNode root;
-        try {
-            root = MAPPER.readTree(json);
-        } catch (Exception e) {
-            log.warn("Model returned non-JSON during fact extraction");
-            return List.of();
-        }
+                                                  JsonNode root) {
 
         Map<String, Long> resolved = new LinkedHashMap<>();
         Map<String, PendingResolution> asked = new LinkedHashMap<>();
@@ -101,10 +205,24 @@ public final class MemoryConsolidator {
             String confidence = node.path("match").path("confidence").asText("none");
 
             Optional<Entity> exact = memory.findByName(name);
+            Optional<Entity> near = exact.isPresent() ? exact : NameMatch.fuzzy(name, known);
             if (exact.isPresent()) {
 
                 memory.enrichEntity(exact.get().id(), aliases, relation);
                 resolved.put(name, exact.get().id());
+            } else if (near.isPresent()) {
+
+                // A typo or a different spelling of somebody already known: no point asking.
+                Entity match = near.get();
+                List<String> withName = new ArrayList<>(aliases);
+                withName.add(name);
+                memory.enrichEntity(match.id(), withName, relation);
+                resolved.put(name, match.id());
+                log.atInfo()
+                        .addKeyValue("event", "memory.fuzzy_match")
+                        .addKeyValue("entity_id", match.id())
+                        .addKeyValue("mention", name)
+                        .log("«{}» taken as a spelling of «{}»", name, match.canonicalName());
             } else if (matchedId > 0 && "high".equals(confidence) && memory.entity(matchedId).isPresent()) {
                 List<String> withName = new ArrayList<>(aliases);
                 withName.add(name);
@@ -152,6 +270,12 @@ public final class MemoryConsolidator {
 
             if (holdFor != null) {
                 holdFor.heldFacts().add(new HeldFact(text, category, date, entityIds));
+            } else if (duplicateOf(text, entityIds) instanceof Fact existing) {
+
+                log.atDebug()
+                        .addKeyValue("event", "memory.duplicate")
+                        .addKeyValue("fact_id", existing.id())
+                        .log("«{}» is already known as «{}» -- not stored again", text, existing.text());
             } else {
                 memory.addFact(text, category, date, sourceId, entityIds);
                 stored++;

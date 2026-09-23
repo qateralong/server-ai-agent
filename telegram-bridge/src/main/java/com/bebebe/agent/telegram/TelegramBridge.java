@@ -292,6 +292,28 @@ public final class TelegramBridge implements AutoCloseable {
         sendPlain(chatId, text);
     }
 
+    /**
+     * The last check before an agent reply leaves for the chat. It is a safety net: anything it
+     * catches is a bug somewhere upstream, and the point is that the bug shows up as one neutral
+     * sentence here and the whole text in the log, rather than as the agent's internals in front
+     * of the user.
+     */
+    private AgentReply.Text guard(long chatId, AgentReply.Text reply) {
+        String reason = com.bebebe.agent.core.LeakGuard.suspect(reply.text());
+        if (reason == null) {
+            return reply;
+        }
+        log.atWarn()
+                .addKeyValue("event", "reply.leak_blocked")
+                .addKeyValue("chat_id", chatId)
+                .addKeyValue("reason", reason)
+                .addKeyValue("blocked", reply.text())
+                .log("Possible leak caught before sending to chat {} ({}) -- replaced with a neutral reply",
+                        chatId, reason);
+        return new AgentReply.Text(com.bebebe.agent.core.LeakGuard.neutralReply(),
+                java.util.List.of(com.bebebe.agent.core.LeakGuard.neutralReply()));
+    }
+
     public void start() {
         if (!config.isUsable()) {
             log.info("Telegram bridge not started: {}",
@@ -631,7 +653,8 @@ public final class TelegramBridge implements AutoCloseable {
     public void deliver(long chatId, AgentReply reply, boolean spoken) {
         switch (reply) {
             case AgentReply.Silence ignored -> { }
-            case AgentReply.Text text -> {
+            case AgentReply.Text original -> {
+                AgentReply.Text text = guard(chatId, original);
                 if (text.text().isBlank()) {
                     break;
                 }

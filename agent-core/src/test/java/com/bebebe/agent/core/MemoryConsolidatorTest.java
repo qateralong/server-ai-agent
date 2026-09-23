@@ -20,6 +20,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MemoryConsolidatorTest {
@@ -175,16 +176,101 @@ class MemoryConsolidatorTest {
         assertTrue(procedures.getFirst().text().contains("OBS"));
     }
 
+    /**
+     * This used to assert the opposite -- that the tail is marked even when extraction fails --
+     * and that is precisely what emptied memory in practice: a model answering in fenced JSON
+     * failed every run and burned every message it was handed. Losing the messages is worse
+     * than paying for one more attempt, so they are now kept.
+     */
     @Test
-    void consolidationMarksTailEvenOnError() {
+    void whenExtractionFailsTheMessagesAreKeptForTheNextRun() {
 
         stub.enqueue("это не json");
 
         DialogSession session = sessionWith("что-то");
         consolidator.consolidate(session);
 
-        assertTrue(memory.unconsolidated(memory.session(session.id()).orElseThrow()).isEmpty());
+        assertFalse(memory.unconsolidated(memory.session(session.id()).orElseThrow()).isEmpty(),
+                "the tail must survive a failed extraction");
         assertEquals(0, memory.countFacts());
+    }
+
+    @Test
+    void aFailedTailIsNotRetriedUntilItGrows() {
+
+        stub.enqueue("это не json");
+        DialogSession session = sessionWith("что-то");
+        consolidator.consolidate(session);
+        int afterFirst = stub.callCount();
+
+        consolidator.consolidate(memory.session(session.id()).orElseThrow());
+
+        assertEquals(afterFirst, stub.callCount(),
+                "the same tail must not be sent again -- a broken model would be asked on every message");
+    }
+
+    @Test
+    void jsonWrappedInMarkdownFencesIsStillUnderstood() {
+
+        stub.enqueue("""
+                ```json
+                {"entities":[],"facts":[{"text":"пьёт чай без сахара","category":"preference",
+                 "entities":[],"date":""}]}
+                ```""");
+
+        consolidator.consolidate(sessionWith("я пью чай без сахара"));
+
+        assertEquals(1, memory.countFacts(), "a fenced answer is what the live model actually sent");
+    }
+
+    @Test
+    void theSameFactInSlightlyDifferentWordsIsNotStoredTwice() {
+        stub.enqueue("""
+                {"entities":[{"name":"Саша","relation":"друг","aliases":[],
+                              "match":{"entity_id":0,"confidence":"none"}}],
+                 "facts":[{"text":"Саша не ест мясо","category":"preference","date":"","entities":["Саша"]}]}""");
+        consolidator.consolidate(sessionWith("Саша не ест мясо"));
+        assertEquals(1, memory.countFacts());
+
+        stub.enqueue("""
+                {"entities":[{"name":"Саша","relation":"друг","aliases":[],
+                              "match":{"entity_id":0,"confidence":"none"}}],
+                 "facts":[{"text":"Саша не ест мяса","category":"preference","date":"","entities":["Саша"]}]}""");
+        consolidator.consolidate(sessionWith("Саша опять не ест мяса"));
+
+        assertEquals(1, memory.countFacts(), "the same thing said again must not become a second fact");
+    }
+
+    @Test
+    void aDetailAddedToAKnownFactIsStillANewFact() {
+        stub.enqueue("""
+                {"entities":[],"facts":[{"text":"пьёт чай","category":"preference","date":"","entities":[]}]}""");
+        consolidator.consolidate(sessionWith("я пью чай"));
+
+        stub.enqueue("""
+                {"entities":[],
+                 "facts":[{"text":"пьёт чай только зелёный и без сахара","category":"preference",
+                           "date":"","entities":[]}]}""");
+        consolidator.consolidate(sessionWith("чай только зелёный, без сахара"));
+
+        assertEquals(2, memory.countFacts(), "a longer, more specific wording carries new information");
+    }
+
+    @Test
+    void aMisspeltNameIsMatchedWithoutAskingTheUser() {
+        memory.addEntity("Александр", List.of(), "друг", "");
+        stub.enqueue("""
+                {"entities":[{"name":"Алексанрд","relation":"","aliases":[],
+                              "match":{"entity_id":0,"confidence":"none"}}],
+                 "facts":[{"text":"Алексанрд купил велосипед","category":"event","date":"","entities":["Алексанрд"]}]}""");
+
+        List<AgentReply.EntityQuestion> questions = consolidator.consolidate(sessionWith("Алексанрд купил велосипед"));
+
+        assertTrue(questions.isEmpty(), "a typo is not worth a question");
+        assertEquals(1, memory.countEntities(), "and must not create a second person");
+        Entity sasha = memory.findByName("Александр").orElseThrow();
+        assertTrue(sasha.aliases().contains("Алексанрд"), "the spelling is remembered as an alias");
+        assertEquals(1, memory.factsOf(sasha.id()).size());
     }
 
     @Test
