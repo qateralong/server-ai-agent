@@ -14,6 +14,8 @@ import java.util.List;
 
 public final class OllamaProvider implements LlmProvider {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(OllamaProvider.class);
+
     public static final String ID = "ollama";
 
     private final OllamaClient client;
@@ -65,6 +67,24 @@ public final class OllamaProvider implements LlmProvider {
         return client.config().timeout();
     }
 
+    /**
+     * Vision in Ollama belongs to the model, not to the endpoint, so the model itself is asked --
+     * {@code /api/show} reports a {@code vision} capability. The answer is cached per model name:
+     * it cannot change without the model changing, and a round trip before every picture would be
+     * a waste.
+     */
+    @Override
+    public boolean supportsImages() {
+        String model = client.config().model();
+        return visionByModel.computeIfAbsent(model, m -> {
+            boolean vision = client.capabilities(m).contains("vision");
+            log.info("Model «{}»: images {}", m, vision ? "supported" : "not supported");
+            return vision;
+        });
+    }
+
+    private final java.util.Map<String, Boolean> visionByModel = new java.util.concurrent.ConcurrentHashMap<>();
+
     @Override
     public LlmResponse chat(LlmRequest request) {
         OllamaConfig config = client.config();
@@ -75,7 +95,7 @@ public final class OllamaProvider implements LlmProvider {
         ChatRequest.Builder builder = ChatRequest.builder(config.model())
                 .system(request.system())
                 .messages(history)
-                .user(request.user())
+                .user(request.user(), request.images().stream().map(LlmImage::base64).toList())
                 .temperature(request.temperature() != null ? request.temperature() : config.temperature())
                 .numCtx(config.numCtx());
         if (request.structured()) {

@@ -161,11 +161,20 @@ class AgentDecisionTest {
     void promptAllowsSearchInConversationButNotOnEveryMessage() {
         for (boolean scripts : List.of(true, false)) {
             String prompt = DecisionProtocol.decisionPrompt(null, scripts);
-            assertTrue(prompt.contains("in free conversation"), "discretionary search described (scripts=" + scripts + ")");
-            assertTrue(prompt.contains("exchange rates"), "mandatory cases remain");
-            assertTrue(prompt.contains("not on every message"), "frequency limit in words");
-            assertTrue(prompt.contains("already come up in this"), "repeated search on the same topic forbidden");
-            assertTrue(prompt.contains("persona instruction"), "persona may move the boundary");
+            String where = " (scripts=" + scripts + ")";
+
+            assertTrue(prompt.contains("could the correct answer have been different a year"),
+                    "the criterion is one concrete question, not a feeling" + where);
+            assertTrue(prompt.contains("exchange rates"), "mandatory cases remain" + where);
+            assertTrue(prompt.contains("search in conversation too"),
+                    "discretionary search in conversation is still allowed" + where);
+            assertTrue(prompt.contains("do NOT search"), "and the list of what not to search for" + where);
+            assertTrue(prompt.contains("At most one per message"), "frequency limit in words" + where);
+            assertTrue(prompt.contains("already established earlier in this"),
+                    "repeated search on the same topic forbidden" + where);
+            assertTrue(prompt.contains("could not find current information"),
+                    "a failed search must be admitted, not papered over" + where);
+            assertTrue(prompt.contains("persona instruction"), "persona may move the boundary" + where);
         }
         String without = DecisionProtocol.withoutToolPrompt("что там?", "web_search");
         assertTrue(without.contains("Do not mention limits") && without.contains("что там?"));

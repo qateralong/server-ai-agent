@@ -470,6 +470,11 @@ public final class TelegramBridge implements AutoCloseable {
             return;
         }
 
+        if (message.hasPhoto()) {
+            onPhoto(chatId, message);
+            return;
+        }
+
         if (!message.hasText()) {
             return;
         }
@@ -535,6 +540,70 @@ public final class TelegramBridge implements AutoCloseable {
                 .log("Chat {}: '{}' taken from the file {} ({} chars)",
                         chatId, pending.get().fieldKey(), document.fileName(), text.length());
         handlePendingInput(chatId, pending.get(), text);
+    }
+
+    /**
+     * A screenshot of an error, a photo of something to look at. The picture is downloaded and
+     * handed to the model together with its caption -- as context for this one question. It is
+     * not stored, not written to the session log and never becomes part of a script.
+     */
+    private void onPhoto(long chatId, Message message) {
+        if (!agentSwitch.isOn()) {
+            send(chatId, OFF_REPLY);
+            return;
+        }
+        var size = message.largestPhoto().orElse(null);
+        if (size == null) {
+            return;
+        }
+        if (size.fileSize() != null && size.fileSize() > com.bebebe.agent.llm.LlmImage.MAX_BYTES) {
+            send(chatId, "🖼 Картинка слишком большая: до "
+                    + (com.bebebe.agent.llm.LlmImage.MAX_BYTES / (1024 * 1024)) + " МБ.");
+            return;
+        }
+        String traceId = TraceContext.current().orElse(null);
+        String caption = message.caption();
+        ttsExecutor.submit(TraceContext.wrap(traceId, () -> downloadAndLook(chatId, size, caption, traceId)));
+    }
+
+    private void downloadAndLook(long chatId, com.bebebe.agent.telegram.api.Dto.PhotoSize size,
+                                 String caption, String traceId) {
+        byte[] bytes;
+        String mediaType;
+        try {
+            var file = api.getFile(size.fileId());
+            if (file == null || file.filePath() == null || file.filePath().isBlank()) {
+                send(chatId, "🖼 Telegram не отдал этот файл.");
+                return;
+            }
+            bytes = api.downloadFile(file.filePath());
+            mediaType = com.bebebe.agent.llm.LlmImage.mediaTypeOf(file.filePath());
+        } catch (TelegramApiException e) {
+            log.warn("Image from chat {} not downloaded: {}", chatId, e.getMessage());
+            send(chatId, "🖼 Не удалось скачать изображение: " + e.getMessage());
+            return;
+        }
+        if (bytes.length > com.bebebe.agent.llm.LlmImage.MAX_BYTES) {
+            send(chatId, "🖼 Картинка слишком большая: до "
+                    + (com.bebebe.agent.llm.LlmImage.MAX_BYTES / (1024 * 1024)) + " МБ.");
+            return;
+        }
+
+        log.atInfo().addKeyValue("event", "image.received")
+                .addKeyValue("chat_id", chatId)
+                .addKeyValue("bytes", bytes.length)
+                .addKeyValue("media_type", mediaType)
+                .addKeyValue("caption", caption == null ? "" : caption)
+                .log("Image from chat {}: {} bytes, {}", chatId, bytes.length, mediaType);
+
+        UserMessage question = UserMessage.image(caption, chatId, traceId,
+                java.util.List.of(new com.bebebe.agent.llm.LlmImage(bytes, mediaType)));
+        try (AutoCloseable typing = typingWhile(chatId)) {
+            deliver(chatId, agentHandler.reply(question), false);
+        } catch (Exception e) {
+            log.error("Failed to handle the image from chat {}", chatId, e);
+            send(chatId, "🖼 Не получилось посмотреть на изображение.");
+        }
     }
 
     private void onVoiceMessage(long chatId, Message message) {

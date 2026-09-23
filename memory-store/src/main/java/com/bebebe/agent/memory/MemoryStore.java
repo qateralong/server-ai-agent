@@ -422,6 +422,23 @@ public final class MemoryStore implements AutoCloseable {
         }
     }
 
+    /**
+     * Everything remembered, newest first, capped.
+     *
+     * <p>For recall by keyword: a fact only reached the prompt if the name of the person it is
+     * about literally appeared in the message, so "кто из знакомых вегетарианец?" found nothing
+     * even with the fact stored. Ranking happens in the caller; this only hands over the pile.
+     */
+    public synchronized List<Fact> allFacts(int limit) {
+        try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT * FROM facts ORDER BY id DESC LIMIT ?")) {
+            ps.setInt(1, Math.max(1, limit));
+            return readFacts(ps);
+        } catch (SQLException e) {
+            throw new MemoryException("Cannot read the facts", e);
+        }
+    }
+
     public synchronized List<Fact> factsByCategory(FactCategory category) {
         try (PreparedStatement ps = connection.prepareStatement(
                 "SELECT * FROM facts WHERE category = ? ORDER BY id DESC")) {

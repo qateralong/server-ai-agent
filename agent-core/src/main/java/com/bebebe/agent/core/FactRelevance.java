@@ -65,6 +65,29 @@ final class FactRelevance {
         return List.copyOf(ranked.subList(0, limit));
     }
 
+    /**
+     * Facts that share at least one word with the message, best first.
+     *
+     * <p>Unlike {@link #pick} this never falls back to recency: a fact with no word in common is
+     * not "least relevant", it is simply not an answer to this message, and padding the prompt
+     * with recent unrelated facts is how a prompt grows without getting better.
+     */
+    static List<Fact> matching(List<Fact> facts, String message, Instant now, int limit) {
+        Set<String> query = stems(message);
+        if (query.isEmpty() || facts.isEmpty()) {
+            return List.of();
+        }
+        List<Fact> hits = new ArrayList<>();
+        for (Fact fact : facts) {
+            if (overlap(stems(fact.text()), query) > 0) {
+                hits.add(fact);
+            }
+        }
+        hits.sort(Comparator.comparingDouble((Fact f) -> -score(f, query, now))
+                .thenComparing(Fact::createdAt, Comparator.reverseOrder()));
+        return List.copyOf(hits.subList(0, Math.min(limit, hits.size())));
+    }
+
     static double score(Fact fact, Set<String> query, Instant now) {
         double score = overlap(stems(fact.text()), query) * 3.0;
 

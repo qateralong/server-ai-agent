@@ -41,6 +41,14 @@ final class TelegramStubServer implements AutoCloseable {
     /** Set by a test that wants getFile to point at the document instead of the voice file. */
     volatile boolean serveDocument;
 
+    /** A one-pixel PNG: the bytes do not matter, only that they arrive intact. */
+    static final byte[] IMAGE_BYTES = java.util.Base64.getDecoder().decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC");
+
+    static final String IMAGE_FILE_PATH = "photos/file_9.png";
+
+    volatile boolean serveImage;
+
     TelegramStubServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/bot" + TOKEN + "/", exchange -> {
@@ -65,8 +73,9 @@ final class TelegramStubServer implements AutoCloseable {
                 case "getFile" -> """
                         {"ok":true,"result":{"file_id":"%s","file_path":"%s","file_size":%d}}"""
                         .formatted(request.path("file_id").asText(""),
-                                serveDocument ? DOCUMENT_FILE_PATH : VOICE_FILE_PATH,
-                                serveDocument ? DOCUMENT_BYTES.length : VOICE_BYTES.length);
+                                serveImage ? IMAGE_FILE_PATH : serveDocument ? DOCUMENT_FILE_PATH : VOICE_FILE_PATH,
+                                serveImage ? IMAGE_BYTES.length
+                                        : serveDocument ? DOCUMENT_BYTES.length : VOICE_BYTES.length);
                 case "sendMessage", "editMessageText" -> """
                         {"ok":true,"result":{"message_id":%d,"date":0,"chat":{"id":%s,"type":"private"}}}"""
                         .formatted(messageIds.incrementAndGet(), request.path("chat_id").asText("0"));
@@ -77,7 +86,9 @@ final class TelegramStubServer implements AutoCloseable {
         server.createContext("/file/bot" + TOKEN + "/", exchange -> {
             calls.computeIfAbsent("downloadFile", key -> new CopyOnWriteArrayList<>())
                     .add(MAPPER.createObjectNode().put("path", exchange.getRequestURI().getPath()));
-            byte[] body = exchange.getRequestURI().getPath().endsWith(".txt") ? DOCUMENT_BYTES : VOICE_BYTES;
+            String path = exchange.getRequestURI().getPath();
+            byte[] body = path.endsWith(".png") ? IMAGE_BYTES
+                    : path.endsWith(".txt") ? DOCUMENT_BYTES : VOICE_BYTES;
             exchange.sendResponseHeaders(200, body.length);
             try (OutputStream out = exchange.getResponseBody()) {
                 out.write(body);

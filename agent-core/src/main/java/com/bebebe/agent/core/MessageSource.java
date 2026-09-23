@@ -8,7 +8,10 @@ public enum MessageSource {
 
     SYSTEM("System"),
 
-    CLIPBOARD("Clipboard");
+    CLIPBOARD("Clipboard"),
+
+    /** A picture the user sent: a screenshot of an error, a photo of something to look at. */
+    IMAGE("Image");
 
     private final String title;
 

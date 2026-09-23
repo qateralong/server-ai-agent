@@ -162,6 +162,31 @@ public final class OllamaClient implements AutoCloseable {
         return "OK, models available: " + models.size();
     }
 
+    /**
+     * What the model can do, as Ollama itself reports it: {@code /api/show} answers with a
+     * {@code capabilities} array -- {@code completion}, {@code tools}, {@code thinking},
+     * {@code vision}. Asking is the only honest way to know: vision depends on the model, not on
+     * the provider, and the same endpoint serves both kinds.
+     *
+     * @return the capabilities, or an empty list when they could not be obtained
+     */
+    public List<String> capabilities(String model) {
+        try {
+            HttpResponse<String> response = send(buildPost("/api/show",
+                    MAPPER.createObjectNode().put("model", model).toString(),
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)));
+            if (response.statusCode() != 200) {
+                log.debug("/api/show for «{}»: HTTP {}", model, response.statusCode());
+                return List.of();
+            }
+            var node = MAPPER.readTree(response.body()).path("capabilities");
+            return node.isArray() ? node.valueStream().map(n -> n.asText("")).toList() : List.of();
+        } catch (IOException | RuntimeException e) {
+            log.debug("Cannot read the capabilities of «{}»: {}", model, e.getMessage());
+            return List.of();
+        }
+    }
+
     private ChatRequest.Builder defaults(ChatRequest.Builder builder) {
         return builder
                 .temperature(config.temperature())

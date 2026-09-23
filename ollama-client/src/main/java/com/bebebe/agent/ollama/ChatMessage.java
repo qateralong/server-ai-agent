@@ -12,7 +12,10 @@ public record ChatMessage(
         String role,
         String content,
         String thinking,
-        @JsonProperty("tool_calls") List<ToolCall> toolCalls
+        @JsonProperty("tool_calls") List<ToolCall> toolCalls,
+
+        /** Base64 images, as Ollama's chat API takes them: an array on the message itself. */
+        List<String> images
 ) {
 
     public static final String ROLE_SYSTEM = "system";
@@ -21,15 +24,20 @@ public record ChatMessage(
     public static final String ROLE_TOOL = "tool";
 
     public static ChatMessage system(String content) {
-        return new ChatMessage(ROLE_SYSTEM, content, null, null);
+        return new ChatMessage(ROLE_SYSTEM, content, null, null, null);
     }
 
     public static ChatMessage user(String content) {
-        return new ChatMessage(ROLE_USER, content, null, null);
+        return new ChatMessage(ROLE_USER, content, null, null, null);
+    }
+
+    public static ChatMessage user(String content, List<String> base64Images) {
+        return new ChatMessage(ROLE_USER, content, null, null,
+                base64Images == null || base64Images.isEmpty() ? null : List.copyOf(base64Images));
     }
 
     public static ChatMessage assistant(String content) {
-        return new ChatMessage(ROLE_ASSISTANT, content, null, null);
+        return new ChatMessage(ROLE_ASSISTANT, content, null, null, null);
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

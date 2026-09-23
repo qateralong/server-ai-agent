@@ -113,9 +113,16 @@ public final class ClaudeProvider implements LlmProvider {
         if (temperature != null) {
             params.temperature(temperature);
         }
-        for (LlmRequest.LlmMessage m : alternate(request.history(), request.user())) {
+        List<LlmRequest.LlmMessage> turns = alternate(request.history(), request.user());
+        for (int i = 0; i < turns.size(); i++) {
+            LlmRequest.LlmMessage m = turns.get(i);
             if ("assistant".equals(m.role())) {
                 params.addAssistantMessage(m.text());
+            } else if (request.hasImages() && i == turns.size() - 1) {
+
+                // Only the last turn -- that is the question the pictures came with. The
+                // documentation asks for images before the text, and says it reads better that way.
+                params.addUserMessageOfBlockParams(imageBlocks(request, m.text()));
             } else {
                 params.addUserMessage(m.text());
             }
@@ -154,6 +161,41 @@ public final class ClaudeProvider implements LlmProvider {
             stats.failure(wrapped.getMessage());
             throw wrapped;
         }
+    }
+
+    /** An {@code image} content block per picture, then the text -- the order the docs recommend. */
+    private static List<com.anthropic.models.messages.ContentBlockParam> imageBlocks(
+            LlmRequest request, String text) {
+        List<com.anthropic.models.messages.ContentBlockParam> blocks = new ArrayList<>();
+        for (LlmImage image : request.images()) {
+            blocks.add(com.anthropic.models.messages.ContentBlockParam.ofImage(
+                    com.anthropic.models.messages.ImageBlockParam.builder()
+                            .source(com.anthropic.models.messages.Base64ImageSource.builder()
+                                    .mediaType(mediaType(image.mediaType()))
+                                    .data(image.base64())
+                                    .build())
+                            .build()));
+        }
+        blocks.add(com.anthropic.models.messages.ContentBlockParam.ofText(
+                com.anthropic.models.messages.TextBlockParam.builder()
+                        .text(text == null || text.isBlank() ? "(empty)" : text)
+                        .build()));
+        return blocks;
+    }
+
+    private static com.anthropic.models.messages.Base64ImageSource.MediaType mediaType(String raw) {
+        return switch (raw) {
+            case "image/png" -> com.anthropic.models.messages.Base64ImageSource.MediaType.IMAGE_PNG;
+            case "image/gif" -> com.anthropic.models.messages.Base64ImageSource.MediaType.IMAGE_GIF;
+            case "image/webp" -> com.anthropic.models.messages.Base64ImageSource.MediaType.IMAGE_WEBP;
+            default -> com.anthropic.models.messages.Base64ImageSource.MediaType.IMAGE_JPEG;
+        };
+    }
+
+    /** Every current Claude model reads images; unlike Ollama it does not depend on the model. */
+    @Override
+    public boolean supportsImages() {
+        return true;
     }
 
     static List<LlmRequest.LlmMessage> alternate(List<LlmRequest.LlmMessage> history, String user) {

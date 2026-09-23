@@ -284,6 +284,12 @@ max_page_chars = 4000
 # How many times to reformulate the query if the results are off-topic.
 # Each reformulation is a model call from the message's SHARED budget.
 max_reformulations = 2
+
+# How long the result of a search is reused for the same question, in minutes.
+# Asking the same thing again a minute later costs three model calls and a trip
+# to the search engine for an answer that has not changed. 0 -- no cache.
+# The key is the stems of the question, so word order does not matter.
+cache_minutes = 10
 timeout_seconds = 15
 
 # ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -82,7 +83,7 @@ class WebSearchToolTest {
     }
 
     private WebSearchTool tool(int maxReformulations, int fetchPages) {
-        WebSearchConfig config = new WebSearchConfig("auto", "", 5, fetchPages, 2000, maxReformulations, Duration.ofSeconds(5), null);
+        WebSearchConfig config = new WebSearchConfig("auto", "", 5, fetchPages, 2000, maxReformulations, Duration.ofSeconds(5), null, Duration.ZERO);
         return new WebSearchTool(config, provider, new PageFetcher(Duration.ofSeconds(5), 2000));
     }
 
@@ -92,6 +93,84 @@ class WebSearchToolTest {
 
     private SearchResult rate() {
         return new SearchResult("Курс доллара ЦБ", pageUrl + "/rate", "Официальный курс 95,42");
+    }
+
+    private WebSearchTool cachingTool() {
+        WebSearchConfig config = new WebSearchConfig("auto", "", 5, 1, 2000, 0,
+                Duration.ofSeconds(5), null, Duration.ofMinutes(10));
+        return new WebSearchTool(config, provider, new PageFetcher(Duration.ofSeconds(5), 2000));
+    }
+
+    @Test
+    void resultsThatDoNotAnswerTheQuestionAreReportedAsAFailure() {
+        searchScript.add(List.of(rate()));
+        llmScript.add("курс доллара");
+        llmScript.add("{\"relevant\":false,\"conflicting\":false,\"new_query\":\"\"}");
+
+        ToolResult result = run(tool(0, 1), "когда родился Пушкин?", "Пушкин");
+
+        assertFalse(result.success(),
+                "pages about something else must not be handed over as if they answered");
+        assertTrue(result.content().contains("could not find"), result.content());
+        assertTrue(result.content().contains("do not replace it with a guess"),
+                "and the model must be told not to fill the gap from memory: " + result.content());
+    }
+
+    @Test
+    void conflictingSourcesAreFlaggedInsteadOfPickingOne() {
+        searchScript.add(List.of(rate()));
+        llmScript.add("курс доллара");
+        llmScript.add("{\"relevant\":true,\"conflicting\":true,\"new_query\":\"\"}");
+
+        ToolResult result = run(tool(0, 1), "какой курс доллара?", "курс");
+
+        assertTrue(result.success(), "the data is still usable, it just disagrees");
+        assertTrue(result.content().contains("sources disagree"), result.content());
+        assertTrue(result.content().contains("do not pick one"), result.content());
+    }
+
+    @Test
+    void theSameQuestionAskedAgainDoesNotCostASecondSearch() {
+        searchScript.add(List.of(rate()));
+        llmScript.add("курс доллара ЦБ");
+        llmScript.add("{\"relevant\":true,\"conflicting\":false,\"new_query\":\"\"}");
+        WebSearchTool tool = cachingTool();
+
+        ToolResult first = run(tool, "какой сейчас курс доллара?", "курс доллара");
+        int callsAfterFirst = llmCalls.get();
+        int searchesAfterFirst = searchedQueries.size();
+
+        ToolResult second = run(tool, "курс доллара сейчас какой?", "курс доллара");
+
+        assertEquals(first.content(), second.content(), "the same answer comes back");
+        assertEquals(callsAfterFirst, llmCalls.get(), "and costs no further model calls");
+        assertEquals(searchesAfterFirst, searchedQueries.size(), "and no second trip to the search engine");
+    }
+
+    @Test
+    void adifferentQuestionIsNotServedFromTheCache() {
+        searchScript.add(List.of(rate()));
+        llmScript.add("курс доллара");
+        llmScript.add("{\"relevant\":true,\"conflicting\":false,\"new_query\":\"\"}");
+        searchScript.add(List.of(rate()));
+        llmScript.add("погода в Казани");
+        llmScript.add("{\"relevant\":true,\"conflicting\":false,\"new_query\":\"\"}");
+        WebSearchTool tool = cachingTool();
+
+        run(tool, "какой сейчас курс доллара?", "курс доллара");
+        int searches = searchedQueries.size();
+
+        run(tool, "какая погода в Казани?", "погода Казань");
+
+        assertEquals(searches + 1, searchedQueries.size(), "a different question must still be searched for");
+    }
+
+    @Test
+    void theCacheKeyIgnoresWordOrderAndShortWords() {
+        assertEquals(WebSearchTool.cacheKey("какой сейчас курс доллара", ""),
+                WebSearchTool.cacheKey("курс доллара сейчас какой", ""));
+        assertNotEquals(WebSearchTool.cacheKey("курс доллара", ""),
+                WebSearchTool.cacheKey("курс евро", ""));
     }
 
     @Test
@@ -214,11 +293,11 @@ class WebSearchToolTest {
     @Test
     void providerIsChosenByKey() {
         assertEquals("duckduckgo", WebSearchConfig.defaults().buildProvider().name());
-        assertEquals("brave", new WebSearchConfig("auto", "key", 5, 1, 2000, 1, Duration.ofSeconds(5), null)
+        assertEquals("brave", new WebSearchConfig("auto", "key", 5, 1, 2000, 1, Duration.ofSeconds(5), null, Duration.ZERO)
                 .buildProvider().name());
-        assertEquals("duckduckgo", new WebSearchConfig("duckduckgo", "key", 5, 1, 2000, 1, Duration.ofSeconds(5), null)
+        assertEquals("duckduckgo", new WebSearchConfig("duckduckgo", "key", 5, 1, 2000, 1, Duration.ofSeconds(5), null, Duration.ZERO)
                 .buildProvider().name());
         assertThrows(IllegalArgumentException.class,
-                () -> new WebSearchConfig("brave", "", 5, 1, 2000, 1, Duration.ofSeconds(5), null).buildProvider());
+                () -> new WebSearchConfig("brave", "", 5, 1, 2000, 1, Duration.ofSeconds(5), null, Duration.ZERO).buildProvider());
     }
 }

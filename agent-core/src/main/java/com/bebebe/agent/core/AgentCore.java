@@ -320,6 +320,18 @@ public final class AgentCore {
         if (message.isEmpty()) {
             return AgentReply.silence();
         }
+        if (message.hasImages() && !provider().supportsImages()) {
+
+            // Saying so is the whole point: dropping the attachment silently and answering the
+            // caption as if there were no picture is how a user ends up trusting a wrong answer.
+            log.atWarn()
+                    .addKeyValue("event", "image.unsupported")
+                    .addKeyValue("provider", provider().displayName())
+                    .addKeyValue("model", provider().model())
+                    .log("An image arrived, but model «{}» cannot look at it", provider().model());
+            return AgentReply.text(DecisionProtocol.imagesUnsupportedMessage(
+                    provider().displayName(), provider().model()));
+        }
 
         try {
             return worker.run(message.text(), replyConversationKey(message), () -> handleInWorker(message));
@@ -673,7 +685,9 @@ public final class AgentCore {
         String system = DecisionProtocol.decisionPrompt(tools, scripts) + memoryBlock + DecisionProtocol.nowBlock(clock)
                 + (reminders == null ? "" : reminders.promptBlock())
                 + (live() ? DecisionProtocol.liveRepliesBlock() : "") + personaBlock();
-        LlmResponse response = askStructured(system, history, userBlock, scripts);
+        // The picture goes with the decision call and only with it: it is context for this one
+        // question, not something the agent keeps or builds a script out of.
+        LlmResponse response = askStructured(system, history, userBlock, scripts, message.images());
 
         AgentDecision decision = AgentDecision.parse(response.text(), MAPPER);
         if (!scripts && (decision.type().isScript() || !decision.isUsable())) {
@@ -769,8 +783,13 @@ public final class AgentCore {
     }
 
     private LlmResponse askStructured(String system, List<LlmMessage> history, String user, boolean scripts) {
+        return askStructured(system, history, user, scripts, List.of());
+    }
+
+    private LlmResponse askStructured(String system, List<LlmMessage> history, String user, boolean scripts,
+                                      List<com.bebebe.agent.llm.LlmImage> images) {
         LlmRequest request = new LlmRequest(system, history, user, null,
-                DecisionProtocol.responseSchema(tools, live(), scripts));
+                DecisionProtocol.responseSchema(tools, live(), scripts), images);
         return askBusy(() -> provider().chat(request));
     }
 
@@ -896,6 +915,12 @@ public final class AgentCore {
 
     static final int PROCEDURES = 12;
 
+    /** How many facts keyword recall may add on top of the blocks above. */
+    static final int RECALL_LIMIT = 6;
+
+    /** How far back recall looks. Beyond this the lexical scan stops paying for itself. */
+    static final int RECALL_SCANNED = 500;
+
     private String memoryContext(UserMessage message) {
         List<Entity> mentioned = entityResolver.resolve(message.text());
         java.time.Instant now = clock.instant();
@@ -910,10 +935,33 @@ public final class AgentCore {
                     .addKeyValue("entities", mentioned.stream().map(Entity::canonicalName).toList().toString())
                     .log("Mentioned: {}", mentioned.stream().map(Entity::canonicalName).toList());
         }
-        return MemoryProtocol.contextBlock(mentioned, facts,
-                FactRelevance.pick(memory.factsAboutUser(), message.text(), now, FACTS_ABOUT_USER),
-                FactRelevance.pick(memory.factsByCategory(FactCategory.PROCEDURE),
-                        message.text(), now, PROCEDURES));
+        List<Fact> aboutUser = FactRelevance.pick(
+                memory.factsAboutUser(), message.text(), now, FACTS_ABOUT_USER);
+        List<Fact> procedures = FactRelevance.pick(
+                memory.factsByCategory(FactCategory.PROCEDURE), message.text(), now, PROCEDURES);
+
+        // Recall by keyword over everything else. Without it a fact reached the prompt only when
+        // the name of the person it is about literally appeared in the message, so «кто из
+        // знакомых вегетарианец?» found nothing although the fact was stored.
+        java.util.Set<Long> already = new java.util.HashSet<>();
+        facts.values().forEach(list -> list.forEach(f -> already.add(f.id())));
+        aboutUser.forEach(f -> already.add(f.id()));
+        procedures.forEach(f -> already.add(f.id()));
+
+        List<Fact> recalled = FactRelevance.matching(
+                        memory.allFacts(RECALL_SCANNED), message.text(), now, RECALL_LIMIT + already.size())
+                .stream()
+                .filter(f -> !already.contains(f.id()))
+                .limit(RECALL_LIMIT)
+                .toList();
+        if (!recalled.isEmpty()) {
+            log.atInfo()
+                    .addKeyValue("event", "memory.recalled")
+                    .addKeyValue("count", recalled.size())
+                    .log("Recalled by keyword: {}", recalled.stream().map(Fact::text).toList());
+        }
+
+        return MemoryProtocol.contextBlock(mentioned, facts, aboutUser, procedures, recalled);
     }
 
     /**

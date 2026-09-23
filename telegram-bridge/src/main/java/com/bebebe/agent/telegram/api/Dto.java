@@ -22,7 +22,11 @@ public final class Dto {
             long date,
             String text,
             Voice voice,
-            Document document
+            Document document,
+
+            /** Telegram sends the same photo in several sizes, smallest first. */
+            List<PhotoSize> photo,
+            String caption
     ) {
         public boolean hasText() {
             return text != null && !text.isBlank();
@@ -34,6 +38,17 @@ public final class Dto {
 
         public boolean hasDocument() {
             return document != null;
+        }
+
+        public boolean hasPhoto() {
+            return photo != null && !photo.isEmpty();
+        }
+
+        /** The largest size is the one worth looking at; the others are thumbnails. */
+        public java.util.Optional<PhotoSize> largestPhoto() {
+            return photo == null ? java.util.Optional.empty()
+                    : photo.stream().max(java.util.Comparator.comparingLong(
+                            p -> (long) p.width() * p.height()));
         }
 
         public String command() {
@@ -60,6 +75,10 @@ public final class Dto {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Voice(String fileId, int duration, String mimeType) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record PhotoSize(String fileId, int width, int height, Long fileSize) {
     }
 
     /** An attached file. A .txt here can stand in for a long text answer -- see PendingInputs. */

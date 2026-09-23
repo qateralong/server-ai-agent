@@ -113,6 +113,17 @@ class TelegramBridgeTest {
                 .formatted(updateIds.getAndIncrement(), updateIds.get(), username, CHAT, fileName, mimeType));
     }
 
+    private void sendPhoto(String caption, String username) {
+        stub.enqueue("""
+                {"update_id":%d,"message":{"message_id":%d,"date":0,
+                 "from":{"id":777,"is_bot":false,"first_name":"Иван","username":"%s"},
+                 "chat":{"id":%d,"type":"private"},
+                 "photo":[{"file_id":"small","width":90,"height":60,"file_size":900},
+                          {"file_id":"big","width":1280,"height":860,"file_size":9000}]%s}}"""
+                .formatted(updateIds.getAndIncrement(), updateIds.get(), username, CHAT,
+                        caption == null ? "" : ",\"caption\":\"" + caption + "\""));
+    }
+
     private void pressButton(String callbackData, String username) {
         stub.enqueue("""
                 {"update_id":%d,"callback_query":{"id":"cb-%d",
@@ -171,6 +182,52 @@ class TelegramBridgeTest {
 
         assertTrue(stub.awaitCalls("sendMessage", 1, WAIT));
         assertTrue(textOf(stub.calls("sendMessage").getFirst()).contains("is off"));
+    }
+
+    @Test
+    void aPhotoReachesTheAgentAsAnImageMessage() {
+        agentSwitch.turnOn();
+        startBridge();
+        stub.serveImage = true;
+
+        sendPhoto("что тут не так?", ALLOWED);
+
+        assertTrue(stub.awaitCalls("downloadFile", 1, WAIT), "the photo was not downloaded");
+        assertEquals("big", stub.calls("getFile").getFirst().path("file_id").asText(),
+                "the largest size is the one worth looking at");
+        assertEquals(1, agentCalls.size());
+        UserMessage seen = agentCalls.getFirst();
+        assertEquals(MessageSource.IMAGE, seen.source());
+        assertEquals("что тут не так?", seen.text(), "the caption is the question");
+        assertTrue(seen.hasImages());
+        assertArrayEquals(TelegramStubServer.IMAGE_BYTES, seen.images().getFirst().bytes());
+        assertEquals("image/png", seen.images().getFirst().mediaType());
+    }
+
+    @Test
+    void aPhotoWithoutACaptionStillGetsAQuestion() {
+        agentSwitch.turnOn();
+        startBridge();
+        stub.serveImage = true;
+
+        sendPhoto(null, ALLOWED);
+
+        assertTrue(stub.awaitCalls("downloadFile", 1, WAIT));
+        assertFalse(agentCalls.getFirst().text().isBlank(),
+                "without a caption the agent still has to be asked something");
+        assertTrue(agentCalls.getFirst().hasImages());
+    }
+
+    @Test
+    void aPhotoToASwitchedOffAgentIsNotEvenDownloaded() {
+        startBridge();
+        stub.serveImage = true;
+
+        sendPhoto("посмотри", ALLOWED);
+
+        assertTrue(stub.awaitCalls("sendMessage", 1, WAIT));
+        assertTrue(textOf(stub.calls("sendMessage").getFirst()).contains("is off"));
+        assertTrue(stub.calls("getFile").isEmpty());
     }
 
     @Test

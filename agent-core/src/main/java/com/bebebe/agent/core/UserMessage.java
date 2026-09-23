@@ -10,7 +10,13 @@ public record UserMessage(
         String text,
         Instant receivedAt,
         String replyTo,
-        String traceId
+        String traceId,
+
+        /**
+         * Pictures that came with this message. Context for one turn only: they are handed to
+         * the model with this question and are not written to the session log or into a script.
+         */
+        java.util.List<com.bebebe.agent.llm.LlmImage> images
 ) {
 
     public UserMessage {
@@ -21,6 +27,25 @@ public record UserMessage(
         receivedAt = receivedAt == null ? Instant.now() : receivedAt;
 
         traceId = traceId == null || traceId.isBlank() ? TraceContext.currentOrNew() : traceId;
+        images = images == null ? java.util.List.of() : java.util.List.copyOf(images);
+    }
+
+    public UserMessage(MessageSource source, String text, Instant receivedAt, String replyTo, String traceId) {
+        this(source, text, receivedAt, replyTo, traceId, java.util.List.of());
+    }
+
+    public boolean hasImages() {
+        return !images.isEmpty();
+    }
+
+    /** A photo with a caption, or without one -- then the caption stands in for the question. */
+    public static UserMessage image(String caption, long chatId, String traceId,
+                                    java.util.List<com.bebebe.agent.llm.LlmImage> images) {
+        String text = caption == null || caption.isBlank()
+                ? "Посмотри на изображение и скажи, что на нём."
+                : caption;
+        return new UserMessage(MessageSource.IMAGE, text, Instant.now(),
+                Long.toString(chatId), traceId, images);
     }
 
     public UserMessage(MessageSource source, String text, Instant receivedAt, String replyTo) {

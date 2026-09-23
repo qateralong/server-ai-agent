@@ -49,6 +49,12 @@ public final class SwitchableProvider implements LlmProvider {
         return current.model();
     }
 
+    /** Asked of whoever answers next, not of whoever answered last. */
+    @Override
+    public boolean supportsImages() {
+        return current.supportsImages();
+    }
+
     @Override
     public void setModel(String model) {
         current.setModel(model);

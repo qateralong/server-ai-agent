@@ -52,6 +52,10 @@ public record ChatRequest(
             return message(ChatMessage.user(text));
         }
 
+        public Builder user(String text, java.util.List<String> base64Images) {
+            return message(ChatMessage.user(text, base64Images));
+        }
+
         public Builder temperature(Double value) {
             return option("temperature", value);
         }

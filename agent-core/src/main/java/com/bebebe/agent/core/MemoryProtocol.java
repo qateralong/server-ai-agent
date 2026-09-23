@@ -94,8 +94,21 @@ public final class MemoryProtocol {
                 entities -- names from the entities list above; empty if the fact is about the
                 user themselves.
 
+                THE USER THEMSELVES IS NOT AN ENTITY, BUT FACTS ABOUT THEM ARE THE MOST VALUABLE
+                ONES. Write them with entities: []. In particular, never skip:
+                  * what they are called -- «Пользователя зовут Иван» -- the very first thing
+                    worth having and the easiest to walk past, because a name is not a "fact";
+                  * where they live and work, what they do;
+                  * what they own and use: machine, OS, tools, languages, equipment;
+                  * how they want to be talked to: length, tone, language, what irritates them;
+                  * health, restrictions, allergies, things that must not be forgotten;
+                  * paths, project names, addresses, accounts they mention in passing;
+                  * plans and intentions: what they are going to do, what they are waiting for.
+
                 Do not record: one-off questions ("how much disk space"), retellings of the agent's
                 answers, weather, pleasantries. If there is nothing to remember, both arrays are empty.
+                When in doubt whether something is worth remembering -- write it down. A fact nobody
+                needs costs one line; a fact that was not written down is lost for good.
                 Formulate facts briefly, in the third person, in Russian.
                 """;
     }
@@ -125,7 +138,8 @@ public final class MemoryProtocol {
     public static String contextBlock(List<Entity> mentioned,
                                       Map<Entity, List<Fact>> factsByEntity,
                                       List<Fact> aboutUser,
-                                      List<Fact> procedures) {
+                                      List<Fact> procedures,
+                                      List<Fact> recalled) {
         StringBuilder sb = new StringBuilder();
 
         if (!mentioned.isEmpty()) {
@@ -152,6 +166,16 @@ public final class MemoryProtocol {
         if (!procedures.isEmpty()) {
             sb.append("\nProcedures the user asked to remember:\n");
             for (Fact fact : procedures) {
+                sb.append("  ").append(fact.describeForModel()).append('\n');
+            }
+        }
+
+        if (!recalled.isEmpty()) {
+
+            // Found by words of the message rather than by a name in it, so it is offered as a
+            // lead, not as an established part of the subject.
+            sb.append("\nAlso remembered, possibly about this:\n");
+            for (Fact fact : recalled) {
                 sb.append("  ").append(fact.describeForModel()).append('\n');
             }
         }

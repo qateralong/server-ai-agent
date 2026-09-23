@@ -24,6 +24,7 @@ public final class WebSearchTool implements Tool {
     private final WebSearchConfig config;
     private final SearchProvider provider;
     private final PageFetcher fetcher;
+    private final Cache cache = new Cache();
 
     public WebSearchTool(WebSearchConfig config) {
         this(config, config.buildProvider(), new PageFetcher(config.timeout(), config.maxPageChars()));
@@ -69,9 +70,20 @@ public final class WebSearchTool implements Tool {
             return ToolResult.failure("Nothing to search for was given");
         }
 
+        String key = cacheKey(question, topic);
+        if (!config.cacheFor().isZero()) {
+            Optional<ToolResult> cached = cache.get(key);
+            if (cached.isPresent()) {
+                log.atInfo().addKeyValue("event", "web.cache_hit").addKeyValue("question", question)
+                        .log("The same thing was already searched for recently -- reusing the result");
+                return cached.get();
+            }
+        }
+
         String query = formulateQuery(context, question, topic);
         List<SearchResult> results = List.of();
         String lastError = null;
+        Verdict verdict = Verdict.unjudged();
 
         for (int attempt = 0; attempt <= config.maxReformulations(); attempt++) {
             try {
@@ -88,26 +100,35 @@ public final class WebSearchTool implements Tool {
                     .addKeyValue("results", results.size())
                     .log("Search «{}»: {} results", query, results.size());
 
-            if (results.isEmpty()) {
-                Optional<String> next = reformulate(context, question, query, results, attempt);
-                if (next.isEmpty()) {
-                    break;
-                }
-                query = next.get();
-                continue;
-            }
+            verdict = results.isEmpty()
+                    ? new Verdict(false, false, "", true)
+                    : judge(context, question, query, results);
 
-            Optional<String> next = reformulate(context, question, query, results, attempt);
-            if (next.isEmpty()) {
+            boolean canRetry = attempt < config.maxReformulations();
+            if (verdict.relevant() || !canRetry
+                    || verdict.nextQuery().isEmpty() || verdict.nextQuery().equalsIgnoreCase(query)) {
                 break;
             }
-            query = next.get();
+            query = verdict.nextQuery();
         }
 
         if (results.isEmpty()) {
             return ToolResult.failure(lastError != null
                     ? "Search unavailable: " + lastError
                     : "Nothing found for «" + query + "»");
+        }
+
+        // The results were looked at and judged not to answer the question. Handing them over
+        // anyway is how a search failure turns into a confident wrong answer.
+        if (verdict.judged() && !verdict.relevant()) {
+            log.atInfo().addKeyValue("event", "web.irrelevant").addKeyValue("query", query)
+                    .log("Found pages do not answer the question -- reporting a failure instead");
+            return ToolResult.failure("""
+                    Could not find an answer to this question. The search for «%s» returned pages \
+                    about something else, and the attempts to reword it did not help.
+                    Tell the user plainly that you could not find current information on this, \
+                    and do not replace it with a guess of your own."""
+                    .formatted(query));
         }
 
         StringBuilder content = new StringBuilder();
@@ -134,7 +155,17 @@ public final class WebSearchTool implements Tool {
             results.stream().limit(3).forEach(r -> sources.add(r.url()));
         }
 
-        return ToolResult.ok(content.toString(), String.join("\n", sources));
+        if (verdict.conflicting()) {
+
+            content.append("\nNOTE: the sources disagree with each other here. Say so and give "
+                    + "the variants with their sources; do not pick one and present it as the fact.\n");
+        }
+
+        ToolResult result = ToolResult.ok(content.toString(), String.join("\n", sources));
+        if (!config.cacheFor().isZero()) {
+            cache.put(key, result);
+        }
+        return result;
     }
 
     private String formulateQuery(ToolContext context, String question, String topic) {
@@ -159,17 +190,29 @@ public final class WebSearchTool implements Tool {
         return topic.isEmpty() ? question : topic;
     }
 
-    private Optional<String> reformulate(ToolContext context, String question, String query,
-                                         List<SearchResult> results, int attempt) {
-        if (attempt >= config.maxReformulations()) {
-            return Optional.empty();
+    /**
+     * What the model thinks of the results it was shown.
+     *
+     * @param relevant    do the snippets actually answer the question
+     * @param conflicting do the sources disagree with each other about the answer
+     * @param nextQuery   a different wording to try, empty when there is none
+     * @param judged      false when the verdict could not be obtained at all
+     */
+    record Verdict(boolean relevant, boolean conflicting, String nextQuery, boolean judged) {
+
+        static Verdict unjudged() {
+            return new Verdict(true, false, "", false);
         }
+    }
+
+    private Verdict judge(ToolContext context, String question, String query, List<SearchResult> results) {
         Map<String, Object> schema = new LinkedHashMap<>();
         schema.put("type", "object");
         schema.put("properties", Map.of(
                 "relevant", Map.of("type", "boolean"),
+                "conflicting", Map.of("type", "boolean"),
                 "new_query", Map.of("type", "string")));
-        schema.put("required", List.of("relevant", "new_query"));
+        schema.put("required", List.of("relevant", "conflicting", "new_query"));
         schema.put("additionalProperties", false);
 
         StringBuilder sb = new StringBuilder("User question: ").append(question)
@@ -180,30 +223,84 @@ public final class WebSearchTool implements Tool {
         for (int i = 0; i < results.size(); i++) {
             sb.append(results.get(i).describe(i + 1)).append('\n');
         }
-        sb.append("\nIf the question can be answered from these snippets -- relevant = true, new_query = \"\". "
-                + "If not -- relevant = false and new_query with a different wording (other words, "
-                + "a place/date refinement, another language).");
+        sb.append("""
+
+                relevant    -- true only if these snippets really answer THAT question. A page
+                               about roughly the same subject, or about another date, place or
+                               version, is not an answer: then false.
+                conflicting -- true if the sources give different answers to the same question
+                               (different figures, dates, outcomes).
+                new_query   -- when relevant = false: a different wording (other words, a place
+                               or date refinement, another language). Otherwise "".""");
 
         try {
             String answer = context.llm().ask(
                     "You evaluate search results. Answer only with JSON per the schema.", sb.toString(), schema);
             JsonNode node = MAPPER.readTree(answer);
-            boolean relevant = node.path("relevant").asBoolean(true);
-            String next = node.path("new_query").asText("").strip();
+            Verdict verdict = new Verdict(
+                    node.path("relevant").asBoolean(true),
+                    node.path("conflicting").asBoolean(false),
+                    node.path("new_query").asText("").strip(),
+                    true);
             log.atInfo()
                     .addKeyValue("event", "web.relevance")
-                    .addKeyValue("relevant", relevant)
-                    .addKeyValue("new_query", next)
-                    .log("Results {}", relevant ? "fit" : "do not fit, reformulating");
-            if (relevant || next.isEmpty() || next.equalsIgnoreCase(query)) {
-                return Optional.empty();
-            }
-            return Optional.of(next);
+                    .addKeyValue("relevant", verdict.relevant())
+                    .addKeyValue("conflicting", verdict.conflicting())
+                    .addKeyValue("new_query", verdict.nextQuery())
+                    .log("Results {}", verdict.relevant() ? "fit" : "do not fit");
+            return verdict;
         } catch (ToolContext.BudgetExhausted e) {
             throw e;
         } catch (Exception e) {
+
+            // Without a verdict the honest thing is to pass the results on rather than to
+            // declare a failure: the snippets may well be fine.
             log.warn("Result evaluation failed: {}", e.getMessage());
-            return Optional.empty();
+            return Verdict.unjudged();
         }
+    }
+
+    /**
+     * Repeating the same question a minute later should not cost another three model calls and
+     * another round-trip to the search engine. Keyed by the stems of the question, so "какой
+     * сейчас курс доллара" and "курс доллара сейчас какой" are one entry.
+     */
+    private final class Cache {
+
+        private record Entry(ToolResult result, java.time.Instant until) { }
+
+        private final Map<String, Entry> entries = new java.util.LinkedHashMap<>(16, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, Entry> eldest) {
+                return size() > 32;
+            }
+        };
+
+        synchronized Optional<ToolResult> get(String key) {
+            Entry entry = entries.get(key);
+            if (entry == null) {
+                return Optional.empty();
+            }
+            if (java.time.Instant.now().isAfter(entry.until())) {
+                entries.remove(key);
+                return Optional.empty();
+            }
+            return Optional.of(entry.result());
+        }
+
+        synchronized void put(String key, ToolResult result) {
+            entries.put(key, new Entry(result, java.time.Instant.now().plus(config.cacheFor())));
+        }
+    }
+
+    /** Words of four letters or more, cut to a stem and sorted -- word order must not matter. */
+    static String cacheKey(String question, String topic) {
+        String text = (question + " " + topic).toLowerCase(java.util.Locale.ROOT);
+        return new java.util.TreeSet<>(
+                java.util.Arrays.stream(text.split("[^\\p{L}\\p{N}]+"))
+                        .filter(w -> w.length() >= 4)
+                        .map(w -> w.length() <= 5 ? w.substring(0, w.length() - 1) : w.substring(0, 4))
+                        .toList())
+                .toString();
     }
 }
