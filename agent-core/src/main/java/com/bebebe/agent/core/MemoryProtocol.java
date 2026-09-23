@@ -39,7 +39,7 @@ public final class MemoryProtocol {
         fact.put("properties", Map.of(
                 "text", Map.of("type", "string"),
                 "category", Map.of("type", "string",
-                        "enum", java.util.Arrays.stream(FactCategory.values()).map(FactCategory::wireName).toList()),
+                        "enum", FactCategory.extractableValues().stream().map(FactCategory::wireName).toList()),
                 "date", Map.of("type", "string"),
                 "entities", Map.of("type", "array", "items", Map.of("type", "string")),
                 "replaces", Map.of("type", "array", "items", Map.of("type", "integer")),
@@ -321,6 +321,81 @@ public final class MemoryProtocol {
                 unanswered, work interrupted halfway. An empty array when the conversation is closed.
                 If there is nothing worth remembering at all, summary is an empty string.
                 """;
+    }
+
+    /**
+     * The gardening pass: what a pile of facts looks like once nobody is watching it.
+     *
+     * <p>Deduplication at write time only ever compares a new fact against one neighbourhood and
+     * only catches near-identical wording. Over months that leaves three ways of saying the same
+     * thing, a fact contradicting one written half a year earlier in entirely different words,
+     * and the odd line extraction should never have kept. None of it is reachable by the checks
+     * that run on the way in, because all of them look at one fact at a time.
+     */
+    public static Map<String, Object> gardeningSchema() {
+        Map<String, Object> duplicate = new LinkedHashMap<>();
+        duplicate.put("type", "object");
+        duplicate.put("properties", Map.of(
+                "keep", Map.of("type", "integer"),
+                "drop", Map.of("type", "array", "items", Map.of("type", "integer"))));
+        duplicate.put("required", List.of("keep", "drop"));
+        duplicate.put("additionalProperties", false);
+
+        Map<String, Object> outdated = new LinkedHashMap<>();
+        outdated.put("type", "object");
+        outdated.put("properties", Map.of(
+                "old", Map.of("type", "integer"),
+                "new", Map.of("type", "integer")));
+        outdated.put("required", List.of("old", "new"));
+        outdated.put("additionalProperties", false);
+
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "object");
+        schema.put("properties", Map.of(
+                "duplicates", Map.of("type", "array", "items", duplicate),
+                "outdated", Map.of("type", "array", "items", outdated),
+                "trivia", Map.of("type", "array", "items", Map.of("type", "integer"))));
+        schema.put("required", List.of("duplicates", "outdated", "trivia"));
+        schema.put("additionalProperties", false);
+        return schema;
+    }
+
+    public static String gardeningSystemPrompt() {
+        return """
+                You are the memory module of a personal agent, going over facts that have piled up
+                about one person. Each fact has a number. Answer ONLY with JSON:
+                {"duplicates": [{"keep": 7, "drop": [12, 19]}],
+                 "outdated":   [{"old": 4, "new": 21}],
+                 "trivia":     [33]}
+
+                duplicates -- groups saying THE SAME THING in different words. keep is the fullest
+                and most precise wording of the group; drop are the others. "Саша не ест мясо" and
+                "Саша вегетарианец" are one group. "Любит чай" and "любит чай без сахара" are NOT:
+                the second carries a detail the first does not, and both are true.
+
+                outdated -- old is a fact that a newer one has made untrue: moved, changed jobs,
+                quit, an agreement moved to another day. new is the fact that replaced it. Only
+                when they genuinely CONTRADICT each other. Two things that are both true at once
+                are not outdated, however similar they look.
+
+                trivia -- what should never have been remembered: a one-off question, a retelling
+                of the agent's own answer, the weather, small talk. Be strict about this: a fact
+                that is merely boring is not trivia, and a fact you do not understand is not
+                trivia either.
+
+                THE DEFAULT ANSWER IS THREE EMPTY ARRAYS. You are looking at somebody's memory:
+                a duplicate left in place costs one extra line, a real fact thrown away is gone
+                from the agent's world. When unsure, leave it.
+                Use only the numbers given to you.
+                """;
+    }
+
+    public static String gardeningUserPrompt(String about, List<Fact> facts) {
+        StringBuilder sb = new StringBuilder("Facts about ").append(about).append(":\n");
+        for (Fact fact : facts) {
+            sb.append("  ").append(fact.describeForModel()).append('\n');
+        }
+        return sb.toString();
     }
 
     public static String summaryUserPrompt(List<DialogMessage> messages) {

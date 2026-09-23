@@ -187,6 +187,47 @@ public final class OllamaClient implements AutoCloseable {
         }
     }
 
+    /**
+     * Vectors for a batch of texts, through {@code /api/embed}.
+     *
+     * <p>A batch rather than one call per text on purpose: the whole point of embedding facts is
+     * that it happens in the background over everything already remembered, and doing that one
+     * HTTP round trip at a time is the difference between a minute and an hour.
+     *
+     * @return one vector per input, in the same order
+     * @throws OllamaException if the model is missing or the answer has an unexpected shape
+     */
+    public List<float[]> embed(String model, List<String> inputs) {
+        if (inputs.isEmpty()) {
+            return List.of();
+        }
+        var body = MAPPER.createObjectNode().put("model", model);
+        var array = body.putArray("input");
+        inputs.forEach(array::add);
+
+        HttpResponse<String> response = send(buildPost("/api/embed", body.toString(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)));
+        ensureOk(response.statusCode(), response.body());
+        try {
+            var embeddings = MAPPER.readTree(response.body()).path("embeddings");
+            if (!embeddings.isArray() || embeddings.size() != inputs.size()) {
+                throw new OllamaException("/api/embed returned " + embeddings.size()
+                        + " vectors for " + inputs.size() + " texts");
+            }
+            List<float[]> out = new java.util.ArrayList<>(inputs.size());
+            for (var vector : embeddings) {
+                float[] values = new float[vector.size()];
+                for (int i = 0; i < values.length; i++) {
+                    values[i] = (float) vector.get(i).asDouble();
+                }
+                out.add(values);
+            }
+            return out;
+        } catch (IOException e) {
+            throw new OllamaException("Failed to parse the /api/embed response", e);
+        }
+    }
+
     private ChatRequest.Builder defaults(ChatRequest.Builder builder) {
         return builder
                 .temperature(config.temperature())

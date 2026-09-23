@@ -106,6 +106,16 @@ public final class MemoryStore implements AutoCloseable {
             addColumn(s, "facts", "keywords", "TEXT NOT NULL DEFAULT ''");
             addColumn(s, "sessions", "summary", "TEXT NOT NULL DEFAULT ''");
             s.executeUpdate("CREATE INDEX IF NOT EXISTS idx_facts_current ON facts(superseded_at, id)");
+
+            // One vector per fact per model: vectors of two different models are not comparable,
+            // so changing the model means the old ones simply stop being found and get replaced.
+            s.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS fact_vectors (
+                        fact_id INTEGER NOT NULL REFERENCES facts(id) ON DELETE CASCADE,
+                        model   TEXT    NOT NULL,
+                        vector  BLOB    NOT NULL,
+                        PRIMARY KEY (fact_id, model)
+                    )""");
         }
     }
 
@@ -582,10 +592,19 @@ public final class MemoryStore implements AutoCloseable {
         }
     }
 
+    /**
+     * Facts about the user themselves, always offered to the model.
+     *
+     * <p>Outcomes of the agent's own attempts are deliberately left out: they are about the
+     * machine, not about the person, and they are many. They reach the prompt the other way --
+     * through keyword recall, when the words of the new request match the dead end of the old
+     * one, which is exactly when they help.
+     */
     public synchronized List<Fact> factsAboutUser() {
         try (PreparedStatement ps = connection.prepareStatement("""
                 SELECT f.* FROM facts f
                 WHERE f.id NOT IN (SELECT fact_id FROM fact_entities) AND f.superseded_at IS NULL
+                  AND f.category <> 'outcome'
                 ORDER BY f.id DESC""")) {
             return readFacts(ps);
         } catch (SQLException e) {
@@ -748,6 +767,76 @@ public final class MemoryStore implements AutoCloseable {
         } catch (SQLException e) {
             throw new MemoryException("Cannot count unreviewed facts", e);
         }
+    }
+
+    /**
+     * The vector of a fact, as float32 little-endian bytes.
+     *
+     * <p>Stored as a blob rather than as numbers in columns because nothing queries it in SQL:
+     * the comparison is a dot product over everything, done in memory. A proper vector index
+     * (sqlite-vec) is what this becomes if the base ever grows past the point where that is slow.
+     */
+    public synchronized void saveVector(long factId, String model, float[] vector) {
+        try (PreparedStatement ps = connection.prepareStatement(
+                "INSERT OR REPLACE INTO fact_vectors (fact_id, model, vector) VALUES (?, ?, ?)")) {
+            ps.setLong(1, factId);
+            ps.setString(2, model);
+            ps.setBytes(3, toBytes(vector));
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new MemoryException("Cannot store the vector of fact " + factId, e);
+        }
+    }
+
+    /** Vectors of facts that are still current, for one model. */
+    public synchronized java.util.Map<Long, float[]> vectors(String model) {
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT v.fact_id, v.vector FROM fact_vectors v
+                JOIN facts f ON f.id = v.fact_id AND f.superseded_at IS NULL
+                WHERE v.model = ?""")) {
+            ps.setString(1, model);
+            java.util.Map<Long, float[]> out = new java.util.LinkedHashMap<>();
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.put(rs.getLong("fact_id"), toFloats(rs.getBytes("vector")));
+                }
+            }
+            return out;
+        } catch (SQLException e) {
+            throw new MemoryException("Cannot read the vectors", e);
+        }
+    }
+
+    /** Current facts that have no vector for this model yet -- the backlog for the background pass. */
+    public synchronized List<Fact> factsWithoutVectors(String model, int limit) {
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT f.* FROM facts f
+                WHERE f.superseded_at IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM fact_vectors v WHERE v.fact_id = f.id AND v.model = ?)
+                ORDER BY f.id DESC LIMIT ?""")) {
+            ps.setString(1, model);
+            ps.setInt(2, Math.max(1, limit));
+            return readFacts(ps);
+        } catch (SQLException e) {
+            throw new MemoryException("Cannot read facts without vectors", e);
+        }
+    }
+
+    static byte[] toBytes(float[] vector) {
+        java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocate(vector.length * Float.BYTES)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        for (float value : vector) {
+            buffer.putFloat(value);
+        }
+        return buffer.array();
+    }
+
+    static float[] toFloats(byte[] bytes) {
+        java.nio.FloatBuffer buffer = java.nio.ByteBuffer.wrap(bytes)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
+        float[] vector = new float[buffer.remaining()];
+        buffer.get(vector);
+        return vector;
     }
 
     /** What is no longer current, newest first -- for diagnostics and for undoing a mistake. */

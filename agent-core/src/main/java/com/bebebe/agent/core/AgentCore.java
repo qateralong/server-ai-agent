@@ -5,6 +5,7 @@ import com.bebebe.agent.memory.DialogMessage;
 import com.bebebe.agent.memory.DialogSession;
 import com.bebebe.agent.memory.Entity;
 import com.bebebe.agent.memory.Fact;
+import com.bebebe.agent.memory.FactCategory;
 import com.bebebe.agent.memory.MemoryStore;
 import com.bebebe.agent.memory.MessageRole;
 import com.bebebe.agent.llm.LlmException;
@@ -54,6 +55,7 @@ public final class AgentCore {
     private final ScriptLibrary library;
     private final MemoryStore memory;
     private final MemoryConsolidator consolidator;
+    private final MemoryGardener gardener;
     private final MemoryRecall recall;
     private final ToolRegistry tools;
     private final ReminderService reminders;
@@ -118,6 +120,7 @@ public final class AgentCore {
         this.memory = memory;
         this.tools = tools;
         this.consolidator = new MemoryConsolidator(memory, () -> llm);
+        this.gardener = new MemoryGardener(memory, () -> llm);
         this.recall = new MemoryRecall(memory);
 
         // Recall stops being a single guess made before the model has said anything: when the
@@ -262,6 +265,47 @@ public final class AgentCore {
         this.personas = personas;
     }
 
+    private volatile SemanticRecall semantic;
+
+    /**
+     * Turns on recall by meaning. Without it everything stays lexical, which is what it has
+     * always been -- an embedding model is an option, not a requirement.
+     */
+    public void setEmbeddings(com.bebebe.agent.llm.EmbeddingProvider embeddings) {
+        if (embeddings == null || !embeddings.isReady()) {
+            log.info("Embeddings are not configured: recall stays lexical");
+            return;
+        }
+        SemanticRecall search = new SemanticRecall(memory, embeddings);
+        this.semantic = search;
+        recall.useSemantic(search);
+        log.info("Recall by meaning is on, model «{}»", embeddings.model());
+        sweeper.submit(this::embedPending);
+    }
+
+    /**
+     * Embeds what has been remembered but not yet vectorised, a batch at a time.
+     *
+     * <p>On the background thread and in batches because the first run after switching this on
+     * faces everything ever remembered, and a vector is needed by the next question rather than
+     * by the one being answered.
+     */
+    private void embedPending() {
+        SemanticRecall search = semantic;
+        if (search == null || !agentSwitch.isOn()) {
+            return;
+        }
+        try {
+            if (search.backfill() > 0) {
+
+                // More waiting: come back for the next batch instead of holding the thread.
+                sweeper.submit(this::embedPending);
+            }
+        } catch (RuntimeException e) {
+            log.error("Embedding of remembered facts failed", e);
+        }
+    }
+
     private String personaBlock() {
         com.bebebe.agent.memory.PersonaStore store = personas;
         return store == null ? "" : store.promptBlock();
@@ -383,6 +427,7 @@ public final class AgentCore {
                 AgentReply reply = guarded(budget,
                         () -> loop(message, decide(message, session, budget), budget, 0, null, attempts));
                 afterReply(message, session, reply);
+                rememberOutcome(message, attempts);
                 return reply;
             } finally {
                 if (reminders != null) {
@@ -410,6 +455,42 @@ public final class AgentCore {
             log.info("{} messages accumulated -- consolidating", pending);
             deliverQuestions(consolidator.consolidate(fresh), fresh.conversationKey());
         }
+    }
+
+    /**
+     * A request that ran out of ways to succeed leaves a note behind.
+     *
+     * <p>{@link TaskAttempts} dies with the request, and with it used to die the knowledge that
+     * the whole approach does not work on this machine. Asked the same thing next week, the agent
+     * set off down the same dead end and paid for it again.
+     *
+     * <p>Written as an ordinary fact, so everything memory already does applies to it: it is
+     * found by the words of the next similar request, it can be confirmed or retracted in the
+     * review queue, and the near-duplicate guard turns a second identical failure into a
+     * confirmation rather than a second line.
+     */
+    private void rememberOutcome(UserMessage message, TaskAttempts attempts) {
+        String text = attempts.outcomeFor(message.text());
+        if (text.isEmpty()) {
+            return;
+        }
+        // Against the other dead ends, not against facts about the user: outcomes are kept out
+        // of that list on purpose, and comparing with a list that cannot contain them would
+        // quietly write the same note again every week.
+        Optional<Fact> known = FactDedup.duplicateIn(memory.factsByCategory(FactCategory.OUTCOME), text);
+        if (known.isPresent()) {
+            memory.confirmFact(known.get().id());
+            log.debug("The same dead end is already remembered as #{}", known.get().id());
+            return;
+        }
+        Fact stored = memory.addFact(text, FactCategory.OUTCOME, java.time.LocalDate.now(clock), null,
+                List.of(), com.bebebe.agent.memory.FactSource.EXTRACTED, List.of());
+        sweeper.submit(this::embedPending);
+        log.atInfo()
+                .addKeyValue("event", "memory.outcome")
+                .addKeyValue("fact_id", stored.id())
+                .addKeyValue("attempts", attempts.size())
+                .log("Dead end remembered: {}", text);
     }
 
     private void deliverQuestions(List<AgentReply.EntityQuestion> questions, String conversationKey) {
@@ -466,6 +547,7 @@ public final class AgentCore {
             });
             memory.activeSession(conversationKey(pending.message()))
                     .ifPresent(session -> afterReply(pending.message(), session, reply));
+            rememberOutcome(pending.message(), pending.attempts());
             return reply;
         }
     }
@@ -620,6 +702,7 @@ public final class AgentCore {
         }
 
         if (result.isSuccess()) {
+            attempts.succeed();
             rememberExecuted(message, script, result.stdout());
             return new Step.Done(replyFromText(summarize(message, result, budget)));
         }
@@ -1031,6 +1114,8 @@ public final class AgentCore {
 
         private java.util.concurrent.ScheduledFuture<?> ticking;
 
+        private java.util.concurrent.ScheduledFuture<?> gardening;
+
         /**
          * Background memory work that is not on a timer -- closing a session out. Shares this
          * thread on purpose: consolidation of one session must not run twice at once, and one
@@ -1057,11 +1142,46 @@ public final class AgentCore {
             log.info("Periodic consolidation: every {} min", every.toMinutes());
         }
 
+        /**
+         * Going over memory as a whole, on the same single thread as everything else here: two
+         * passes rewriting the same facts at once is not a race worth having.
+         */
+        synchronized void startGardening(java.time.Duration every) {
+            if (every.isZero() || gardening != null) {
+                if (every.isZero()) {
+                    log.info("Memory gardening is off (memory.gardening_hours = 0)");
+                }
+                return;
+            }
+
+            // Not immediately at start-up: the first minutes after switching on are the busiest,
+            // and a day-scale job has no reason to be in the way.
+            long seconds = Math.max(60, every.toSeconds());
+            gardening = timer.scheduleWithFixedDelay(this::tendSafely, Math.min(600, seconds), seconds,
+                    java.util.concurrent.TimeUnit.SECONDS);
+            log.info("Memory gardening: every {} h", every.toHours());
+        }
+
+        private void tendSafely() {
+            if (!agentSwitch.isOn()) {
+                return;
+            }
+            try (TraceContext.Scope ignored = TraceContext.open("garden-" + System.nanoTime() % 0xffffff)) {
+                gardener.tend();
+            } catch (RuntimeException e) {
+                log.error("Memory gardening failed", e);
+            }
+        }
+
         /** Stopped before the switch-off hook consolidates, so the two never run at once. */
         synchronized void pause() {
             if (ticking != null) {
                 ticking.cancel(false);
                 ticking = null;
+            }
+            if (gardening != null) {
+                gardening.cancel(false);
+                gardening = null;
             }
         }
 
@@ -1092,6 +1212,10 @@ public final class AgentCore {
                     deliverQuestions(consolidator.consolidate(fresh), fresh.conversationKey());
                 }
             }
+
+            // Whatever consolidation has just written still has no vector; this is the one place
+            // that sees every new fact regardless of which path created it.
+            embedPending();
         }
 
         @Override
@@ -1136,6 +1260,8 @@ public final class AgentCore {
             log.info("[hook {}] memory: {} entities, {} facts",
                     name(), memory.countEntities(), memory.countFacts());
             sweeper.start(memory.config().consolidateInterval());
+            sweeper.startGardening(memory.config().gardenInterval());
+            sweeper.submit(AgentCore.this::embedPending);
         }
     }
 

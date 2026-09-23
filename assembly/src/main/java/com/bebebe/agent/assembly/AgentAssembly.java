@@ -123,6 +123,11 @@ public final class AgentAssembly implements AutoCloseable {
         core = new AgentCore(agentSwitch, llm, scripts, library, memory, tools, jobs, clock,
                 config.section("agent").integer("request_budget", RequestBudget.DEFAULT_LIMIT));
         core.setStopGrace(config.section("agent").seconds("stop_grace_seconds", Duration.ofSeconds(20)));
+
+        // Recall by meaning, if there is a model to do it with. Always through Ollama: Anthropic
+        // has no embedding API, so this is configured independently of the chat provider.
+        core.setEmbeddings(providers.embeddings(
+                config.section(MemoryConfig.SECTION).string("embedding_model", "")));
         core.setLiveReplies(settings::liveReplies);
         core.setScriptsEnabled(settings::scriptsEnabled);
         notes = Wiring.startNotes(config, tools, core, clock);

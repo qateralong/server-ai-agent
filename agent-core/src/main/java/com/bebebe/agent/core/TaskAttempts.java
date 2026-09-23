@@ -23,13 +23,48 @@ final class TaskAttempts {
 
     private static final int FAILURE_CHARS = 200;
 
-    private final List<String> attempts = new ArrayList<>();
+    private record Attempt(String what, String failure) {
+    }
+
+    private final List<Attempt> attempts = new ArrayList<>();
+
+    private boolean succeeded;
 
     void record(String what, String failure) {
         if (attempts.size() >= REMEMBERED) {
             attempts.removeFirst();
         }
-        attempts.add((what == null ? "?" : what.strip()) + " -- " + cut(failure));
+        attempts.add(new Attempt(what == null ? "?" : what.strip(), cut(failure)));
+    }
+
+    /** Something finally worked, so there is no dead end to warn anybody about. */
+    void succeed() {
+        succeeded = true;
+    }
+
+    boolean hasSucceeded() {
+        return succeeded;
+    }
+
+    /**
+     * What is worth remembering about a request that ran out of ways to succeed.
+     *
+     * <p>This memory dies with the request, and until now so did the knowledge that the whole
+     * approach does not work here. Asked the same thing tomorrow, the agent set off down the same
+     * dead end, paid for it again, and failed again in the same way.
+     *
+     * <p>Built without asking the model: the task and the error are already in hand, and a fact
+     * nobody paid for is a fact that can be written every time it is earned.
+     *
+     * @return empty when there is nothing worth keeping -- nothing failed, or something worked
+     */
+    String outcomeFor(String task) {
+        if (attempts.isEmpty() || succeeded || task == null || task.isBlank()) {
+            return "";
+        }
+        Attempt last = attempts.getLast();
+        return "Не удалось выполнить скриптом: «" + task.strip() + "». Последняя попытка ("
+                + last.what() + ") — " + last.failure();
     }
 
     boolean isEmpty() {
@@ -47,7 +82,9 @@ final class TaskAttempts {
         }
         StringBuilder sb = new StringBuilder("\nAlready tried in this request, do not repeat any of it:\n");
         for (int i = 0; i < attempts.size(); i++) {
-            sb.append("  ").append(i + 1).append(") ").append(attempts.get(i)).append('\n');
+            Attempt attempt = attempts.get(i);
+            sb.append("  ").append(i + 1).append(") ").append(attempt.what())
+                    .append(" -- ").append(attempt.failure()).append('\n');
         }
         return sb.toString();
     }

@@ -19,6 +19,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -251,6 +252,56 @@ class AgentCoreTest {
         assertTrue(secondFix.contains("Already tried"), secondFix);
         assertTrue(secondFix.contains("первая попытка"),
                 "the fix that already failed has to be in front of the model: " + secondFix);
+    }
+
+    /**
+     * A request that ran out of ways to succeed leaves a note behind. Until now that knowledge
+     * died with the request: asked the same thing next week, the agent set off down the same dead
+     * end, paid for it again and failed the same way.
+     */
+    @Test
+    void aDeadEndIsRememberedForNextTime() {
+        for (int i = 0; i < 50; i++) {
+            stub.enqueueScript("raise ValueError('нет доступа к звуку')");
+        }
+
+        runThrough(core(5), "включи музыку погромче");
+
+        List<com.bebebe.agent.memory.Fact> outcomes = memoryStore.allFacts(20).stream()
+                .filter(f -> f.category() == com.bebebe.agent.memory.FactCategory.OUTCOME)
+                .toList();
+        assertEquals(1, outcomes.size(), "exactly one note per failed request");
+        assertTrue(outcomes.getFirst().text().contains("включи музыку погромче"), outcomes.getFirst().text());
+        assertTrue(outcomes.getFirst().text().contains("нет доступа к звуку"),
+                "and it says what went wrong: " + outcomes.getFirst().text());
+    }
+
+    @Test
+    void aDeadEndIsNotRememberedTwice() {
+        for (int i = 0; i < 100; i++) {
+            stub.enqueueScript("raise ValueError('нет доступа к звуку')");
+        }
+        AgentCore core = core(5);
+
+        runThrough(core, "включи музыку погромче");
+        runThrough(core, "включи музыку погромче");
+
+        assertEquals(1, memoryStore.allFacts(20).stream()
+                        .filter(f -> f.category() == com.bebebe.agent.memory.FactCategory.OUTCOME).count(),
+                "the same dead end twice is a confirmation, not a second line");
+    }
+
+    @Test
+    void somethingThatWorkedLeavesNoComplaintBehind() {
+        stub.enqueueScript("raise ValueError('сломано')");
+        stub.enqueueScript("print('починено')");
+        stub.enqueuePlain("Готово.");
+
+        runThrough(core(), "сделай что-нибудь");
+
+        assertTrue(memoryStore.allFacts(20).stream()
+                        .noneMatch(f -> f.category() == com.bebebe.agent.memory.FactCategory.OUTCOME),
+                "it failed on the way, but the request succeeded -- there is no dead end to warn about");
     }
 
     @Test

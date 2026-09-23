@@ -45,6 +45,29 @@ public final class LlmProviders {
         };
     }
 
+    /**
+     * Embeddings, always through Ollama's slot whatever the chat provider is.
+     *
+     * <p>Anthropic has no embedding API, so a Claude-driven agent that wants recall by meaning
+     * still reaches an Ollama endpoint for it -- local or cloud, whichever is configured in
+     * {@code [llm.ollama]}. Without a model name in {@code [memory] embedding_model} the result
+     * reports itself as not ready and recall stays lexical.
+     */
+    public EmbeddingProvider embeddings(String model) {
+        if (model == null || model.isBlank()) {
+            return new OllamaEmbeddings(null, "");
+        }
+        AppSettings.ProviderSlot slot = settings.slot(AppSettings.PROVIDER_OLLAMA);
+        var section = config.section(OllamaConfig.SECTION);
+        OllamaConfig ollamaConfig = new OllamaConfig(
+                slot.endpoint().isBlank() ? OllamaConfig.DEFAULT_BASE_URL : slot.endpoint(),
+                slot.apiKey(),
+                model.strip(),
+                section.seconds("timeout_seconds", OllamaConfig.DEFAULT_TIMEOUT),
+                null, null);
+        return new OllamaEmbeddings(new com.bebebe.agent.ollama.OllamaClient(ollamaConfig), model.strip());
+    }
+
     public SwitchableProvider switchable() {
         return new SwitchableProvider(create(settings.provider()), this::create);
     }

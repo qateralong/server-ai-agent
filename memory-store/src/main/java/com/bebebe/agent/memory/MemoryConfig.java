@@ -5,7 +5,8 @@ import com.bebebe.agent.config.ConfigSection;
 import java.nio.file.Path;
 import java.time.Duration;
 
-public record MemoryConfig(Path dbPath, Duration sessionIdle, int consolidateEvery, Duration consolidateInterval) {
+public record MemoryConfig(Path dbPath, Duration sessionIdle, int consolidateEvery,
+                           Duration consolidateInterval, Duration gardenInterval) {
 
     public static final String SECTION = "memory";
 
@@ -20,6 +21,15 @@ public record MemoryConfig(Path dbPath, Duration sessionIdle, int consolidateEve
      */
     public static final Duration DEFAULT_CONSOLIDATE_INTERVAL = Duration.ofMinutes(10);
 
+    /**
+     * How often memory is gone over as a whole: duplicates that the write path cannot see,
+     * contradictions written months apart, lines that should never have been kept.
+     *
+     * <p>A day, because the problem it solves takes months to appear and the run costs a model
+     * call. {@code 0} switches it off.
+     */
+    public static final Duration DEFAULT_GARDEN_INTERVAL = Duration.ofHours(24);
+
     public MemoryConfig {
         if (sessionIdle == null || sessionIdle.isZero() || sessionIdle.isNegative()) {
             throw new IllegalArgumentException("memory.session_idle_minutes must be > 0");
@@ -30,6 +40,14 @@ public record MemoryConfig(Path dbPath, Duration sessionIdle, int consolidateEve
         if (consolidateInterval == null || consolidateInterval.isNegative()) {
             throw new IllegalArgumentException("memory.consolidate_minutes must be >= 0");
         }
+        if (gardenInterval == null || gardenInterval.isNegative()) {
+            throw new IllegalArgumentException("memory.gardening_hours must be >= 0");
+        }
+    }
+
+    /** Everything except gardening, which older call sites do not know about. */
+    public MemoryConfig(Path dbPath, Duration sessionIdle, int consolidateEvery, Duration consolidateInterval) {
+        this(dbPath, sessionIdle, consolidateEvery, consolidateInterval, DEFAULT_GARDEN_INTERVAL);
     }
 
     public static MemoryConfig from(ConfigSection section) {
@@ -39,7 +57,9 @@ public record MemoryConfig(Path dbPath, Duration sessionIdle, int consolidateEve
                         .orElse(DEFAULT_SESSION_IDLE.toMinutes())),
                 section.integer("consolidate_every", DEFAULT_CONSOLIDATE_EVERY),
                 Duration.ofMinutes(section.longValue("consolidate_minutes")
-                        .orElse(DEFAULT_CONSOLIDATE_INTERVAL.toMinutes())));
+                        .orElse(DEFAULT_CONSOLIDATE_INTERVAL.toMinutes())),
+                Duration.ofHours(section.longValue("gardening_hours")
+                        .orElse(DEFAULT_GARDEN_INTERVAL.toHours())));
     }
 
     static Path expand(String raw) {

@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -350,6 +351,69 @@ class MemoryEvalTest {
                 ranked.stream().map(Fact::text).toList().toString());
         assertTrue(stated.describeForModel().contains("[со слов пользователя]"),
                 "and the prompt says where it came from: " + stated.describeForModel());
+    }
+
+    /**
+     * The two blind spots the report prints, answered -- but only by meaning, and only when there
+     * is something to measure meaning with.
+     *
+     * <p>What this shows is our half of it: that the fallback fires exactly when the words found
+     * nothing, that a vector reaches the prompt, and that the numbers in the report move. How well
+     * a real embedding model groups Russian is the model's half, and no offline test speaks for
+     * it -- {@link TestEmbeddings} stands in as a model that does its job.
+     */
+    @Test
+    void whatTheWordsCannotFindIsFoundByMeaning() {
+        TestEmbeddings embeddings = new TestEmbeddings();
+        SemanticRecall semantic = new SemanticRecall(memory, embeddings);
+        recall.useSemantic(semantic);
+        semantic.backfill();
+        semantic.backfill();
+
+        Instant now = Instant.now();
+        for (Question question : questions()) {
+            if (!question.blindSpot()) {
+                continue;
+            }
+            assertTrue(recall.select(question.text(), now).offered().contains(question.expected()),
+                    "still blind with embeddings on: " + question.text());
+        }
+    }
+
+    @Test
+    void lookingByMeaningIsAFallbackAndNotTheFirstThingTried() {
+        TestEmbeddings embeddings = new TestEmbeddings();
+        SemanticRecall semantic = new SemanticRecall(memory, embeddings);
+        recall.useSemantic(semantic);
+        semantic.backfill();
+        semantic.backfill();
+        int afterBackfill = embeddings.calls();
+
+        // The words answer this one on their own.
+        recall.select("что приготовить Саше на ужин?", Instant.now());
+        assertEquals(afterBackfill, embeddings.calls(),
+                "a question the free path answers must not buy an embedding");
+
+        // And «спасибо» is not a question at all.
+        recall.select("спасибо", Instant.now());
+        assertEquals(afterBackfill, embeddings.calls(),
+                "«спасибо» и «ок» не должны стоить обращения к эмбеддингам");
+
+        recall.select("кто из моих знакомых музыкант?", Instant.now());
+        assertEquals(afterBackfill + 1, embeddings.calls(),
+                "and only a real miss on a real question does");
+    }
+
+    @Test
+    void withoutEmbeddingsEverythingIsExactlyAsItWas() {
+        assertFalse(recall.hasSemantic());
+        for (Question question : questions()) {
+            if (question.blindSpot()) {
+                assertFalse(recall.select(question.text(), Instant.now()).offered()
+                                .contains(question.expected()),
+                        "the blind spots are honest: " + question.text());
+            }
+        }
     }
 
     @Test

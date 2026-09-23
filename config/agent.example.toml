@@ -314,6 +314,27 @@ consolidate_every = 6
 # watchdog restarted, a machine that lost power -- stays unextracted.
 consolidate_minutes = 10
 
+# How often memory is gone over as a whole, in hours. 0 -- never.
+# Every check that runs when a fact is written looks at one fact against one
+# neighbourhood, so over months a pile collects three wordings of the same
+# thing and facts quietly contradicting ones written half a year earlier.
+# Seeing that needs a look at the whole pile: one model call, one group of
+# facts, at most ten of them retired -- and nothing is deleted, only marked
+# as no longer current.
+gardening_hours = 24
+
+# Recall by meaning, on top of recall by words. Empty -- off, and everything
+# stays lexical, which is what it has always been.
+#
+# The name of an embedding model, ALWAYS taken through Ollama (Anthropic has
+# no embedding API), so it works with Claude as the chat provider too -- the
+# endpoint and key come from [llm.ollama]. Facts are embedded in the
+# background; the query is embedded only when the search by words found
+# nothing and the message actually looks like a question.
+#   local:  ollama pull embeddinggemma  ->  embedding_model = "embeddinggemma"
+#   cloud:  embedding_model = "qwen3-embedding:8b"
+embedding_model = ""
+
 [scheduler]
 # Reminders: the jobs table in a separate SQLite database.
 db_path = "~/.local/share/bebebe-agent/scheduler.db"

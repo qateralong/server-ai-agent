@@ -38,13 +38,23 @@ final class FactDedup {
      * @return the fact it duplicates, if any
      */
     static Optional<Fact> duplicateOf(MemoryStore memory, String text, List<Long> entityIds) {
+        return duplicateIn(entityIds == null || entityIds.isEmpty()
+                ? memory.factsAboutUser()
+                : memory.factsOf(entityIds.getFirst()), text);
+    }
+
+    /**
+     * The same check against a neighbourhood the caller chose.
+     *
+     * <p>Needed because not every kind of fact lives where {@link #duplicateOf} looks: the agent's
+     * own dead ends are deliberately kept out of "facts about the user", and comparing a new one
+     * against a list that cannot contain it would find nothing, every time.
+     */
+    static Optional<Fact> duplicateIn(List<Fact> neighbours, String text) {
         Set<String> words = FactRelevance.stems(text);
         if (words.isEmpty()) {
             return Optional.empty();
         }
-        List<Fact> neighbours = entityIds == null || entityIds.isEmpty()
-                ? memory.factsAboutUser()
-                : memory.factsOf(entityIds.getFirst());
         for (Fact existing : neighbours) {
             if (similarity(words, FactRelevance.stems(existing.text())) >= DUPLICATE_AT) {
                 return Optional.of(existing);

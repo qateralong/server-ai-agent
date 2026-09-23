@@ -72,12 +72,48 @@ final class MemoryRecall {
 
     static final int SEARCH_LIMIT = 12;
 
+    /**
+     * Below this a message is not a question, it is «привет» or «ок». Only above it is a missed
+     * lexical recall worth a network call to look again by meaning.
+     */
+    static final int MIN_STEMS_FOR_SEMANTIC = 3;
+
     private final MemoryStore memory;
     private final EntityResolver entities;
+
+    /** Absent unless an embedding model is configured; then lexical recall is all there is. */
+    private volatile SemanticRecall semantic;
 
     MemoryRecall(MemoryStore memory) {
         this.memory = memory;
         this.entities = new EntityResolver(memory);
+    }
+
+    void useSemantic(SemanticRecall semantic) {
+        this.semantic = semantic;
+    }
+
+    boolean hasSemantic() {
+        return semantic != null && semantic.isReady();
+    }
+
+    /**
+     * Looking by meaning, when looking by words found nothing.
+     *
+     * <p>A fallback rather than the main road: the lexical sweep is free and answers most
+     * questions, and this costs a round trip. The guard on the number of stems keeps «спасибо»
+     * and «ок» from buying an embedding each.
+     */
+    private List<Fact> bySimilarity(String message, java.util.Set<Long> already, int limit) {
+        SemanticRecall search = semantic;
+        if (search == null || !search.isReady()
+                || FactRelevance.stems(message).size() < MIN_STEMS_FOR_SEMANTIC) {
+            return List.of();
+        }
+        return search.similar(message, limit + already.size()).stream()
+                .filter(fact -> !already.contains(fact.id()))
+                .limit(limit)
+                .toList();
     }
 
     /**
@@ -130,6 +166,18 @@ final class MemoryRecall {
                 .filter(f -> !already.contains(f.id()))
                 .limit(RECALL_LIMIT)
                 .toList();
+
+        if (recalled.isEmpty() && mentioned.isEmpty()) {
+
+            // The words found nothing and nobody known was named: either there is nothing to
+            // find, or the question is phrased in words the fact does not contain -- the whole
+            // class of misses the eval has been printing as blind spots.
+            //
+            // A named person means the words did their job, and the facts about them are already
+            // here; paying for a round trip on top of that buys nothing.
+            recalled = bySimilarity(message, already, RECALL_LIMIT);
+        }
+        recalled.forEach(f -> already.add(f.id()));
 
         Map<Entity, List<Fact>> related = relatedTo(mentioned, already, message, now);
         related.values().forEach(list -> list.forEach(f -> already.add(f.id())));
@@ -206,12 +254,17 @@ final class MemoryRecall {
 
         Set<Long> already = new HashSet<>();
         byEntity.values().forEach(list -> list.forEach(f -> already.add(f.id())));
-        List<Fact> matched = FactRelevance.matching(
+        List<Fact> matched = new ArrayList<>(FactRelevance.matching(
                         memory.allFacts(SEARCH_SCANNED), text, now, SEARCH_LIMIT + already.size())
                 .stream()
                 .filter(f -> !already.contains(f.id()))
                 .limit(SEARCH_LIMIT)
-                .toList();
+                .toList());
+
+        // Here the model asked to look, so looking properly is what it paid for: meaning is
+        // searched alongside words rather than only after they fail.
+        matched.forEach(f -> already.add(f.id()));
+        matched.addAll(bySimilarity(text, already, SEARCH_LIMIT));
 
         return new Selection(named, byEntity, List.of(), List.of(), matched,
                 episodesMatching(text), Map.of(), ids(byEntity.values(), List.of(), List.of(), matched));
